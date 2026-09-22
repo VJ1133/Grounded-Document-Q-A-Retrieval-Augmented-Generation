@@ -1,0 +1,16 @@
+.claude/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.chroma/
+data/chroma_db/
+data/uploads/
+.env
+.streamlit/secrets.toml
+*.log
+.DS_Store
+.pytest_cache/
+*.egg-info/
+build/
+dist/
