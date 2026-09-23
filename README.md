@@ -8,9 +8,9 @@ This project is being built version by version (V1 → V5) so that each stage
 demonstrates a distinct AI engineering concept, from a minimal single-document
 RAG pipeline up to an evaluated, production-style service.
 
-> **Status: V2 — Multi-Document RAG.** Upload and search across multiple
-> PDFs, tag them with a document type, and filter which documents/types a
-> question searches. No chat history, reranking, or evaluation dashboard yet
+> **Status: V3 — Citations & Grounding.** Every answer is explicitly marked
+> grounded or not, backed by a retrieval evidence panel and a repeatable
+> grounding test set. No chat history, reranking, or evaluation dashboard yet
 > — those arrive in later versions.
 
 ## Why this project exists
@@ -76,8 +76,8 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 | Version | Focus |
 |---|---|
 | V1 | Basic single-PDF RAG |
-| **V2** | Multi-document RAG with metadata filtering |
-| V3 | Citations and grounded-answer formatting |
+| V2 | Multi-document RAG with metadata filtering |
+| **V3** | Citations and grounded-answer formatting |
 | V4 | Conversational RAG with follow-up questions |
 | V5 | Evaluation, hybrid retrieval/reranking, FastAPI, tests, logging, Docker |
 
@@ -149,11 +149,37 @@ answer-generation call goes to Groq, and only when that provider is chosen.
   question box lets you scope a question to specific document types and/or
   specific documents, instead of always searching everything.
 - **Per-document management.** Each indexed document shows its type and
-  chunk count in the sidebar, with a `✕` button to remove just that one
+  chunk count in the sidebar, with an `X` button to remove just that one
   document — no need to clear and re-upload everything.
 - **Section hints.** Each chunk carries a best-effort guess at which
   heading/section it came from (the first short, non-tabular line on its
   page), shown in the evidence panel when detected.
+
+## Citations & grounding (V3)
+
+- **Grounded/ungrounded badge.** Every answer is explicitly labeled
+  ✓ Grounded or ⚠ Not supported by documents — this isn't just prose the
+  model happened to write; `RagAnswer.grounded` is a real boolean set by
+  `answer_question()`, based on whether the model's refusal message was
+  returned (or whether there was anything to search in the first place).
+- **Evidence always shown, even when unsupported.** Retrieved passages are
+  displayed whether or not they were enough to answer — so you can see
+  *why* the assistant said it didn't know (the closest matches just weren't
+  good enough), not just that it refused.
+- **Retrieval scores are opt-in.** Passage-to-question distances are only
+  shown when you tick "Show retrieval scores (debug)" — useful when
+  debugging retrieval quality, hidden by default to keep the evidence panel
+  readable for normal use.
+- **Clean answer text, separate citations.** The prompt tells the model not
+  to inline its own passage numbers/citation markers — sources are always
+  rendered by the UI (chips + evidence panel), so the answer prose and the
+  citation list don't duplicate or disagree with each other.
+- **Repeatable grounding test set.** `scripts/test_grounding.py` runs a
+  curated list of questions (some answerable, some deliberately
+  out-of-scope) against whichever documents are indexed and reports
+  pass/fail against the expected grounded/ungrounded label for each —
+  a manual-run, live-LLM check that a code or prompt change didn't quietly
+  break refusal behavior.
 
 ## Example questions to try
 
@@ -163,12 +189,18 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 - "What is the capital of France?" — a good test that the assistant correctly
   refuses to answer from outside knowledge.
 
-## Known limitations (V2)
+## Known limitations (V3)
 
 - Fixed-size chunking (words, not semantic boundaries) — a simple starting
   point, not the final word on chunk quality.
 - No conversation memory — every question is independent (V4).
-- No automated retrieval/answer-quality evaluation yet (V5).
+- No automated retrieval/answer-quality evaluation yet — `scripts/test_grounding.py`
+  checks grounded-vs-refused behavior, but doesn't score retrieval precision/recall
+  or answer quality numerically (that's V5).
+- The `grounded` flag is a string match against the model's own refusal
+  message — if a model ever phrases a refusal differently (or a prompt
+  change alters the exact wording), grounding detection silently breaks
+  until `INSUFFICIENT_CONTEXT_MESSAGE` and the prompt are kept in sync.
 - Local generation (`gemma3:4b`) is noticeably weaker than the Groq option at
   precise lookups in dense, table-heavy documents (e.g. exact values in a
   price list) — it can answer "insufficient information" even when the right

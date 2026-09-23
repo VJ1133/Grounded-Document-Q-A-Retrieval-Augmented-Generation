@@ -1,5 +1,32 @@
 # Changelog
 
+## V3 — Citations & Grounding
+
+- `RagAnswer.grounded`: an explicit boolean, set by `answer_question()`
+  rather than inferred by the UI, so "was this answer actually supported"
+  is a real piece of data, not just prose the model happened to write.
+- Grounded/ungrounded badge in the UI (✓ Grounded / ⚠ Not supported by
+  documents), with retrieved evidence still shown either way — so an
+  unsupported answer still lets you see *why* (the closest matches just
+  weren't good enough).
+- Retrieval scores (passage distances) are now opt-in via a "Show retrieval
+  scores (debug)" checkbox instead of always shown.
+- Tightened the generation prompt to keep the model's answer prose free of
+  its own inline citation markers, since sources are always rendered
+  separately by the UI — avoids duplicate/inconsistent citation styles.
+- `scripts/test_grounding.py`: a curated, repeatable grounding test set
+  (some answerable questions, some deliberately out-of-scope) run against
+  live documents and a real LLM call — verified 7/7 passing against Groq.
+- New `tests/test_rag_pipeline.py` (5 tests) covering the `grounded` logic
+  itself via a monkeypatched provider, without needing a live LLM call.
+
+**What I learned:** most of V3's spec was already satisfied by V1/V2
+hardening (page citations, evidence panel, a strict grounded prompt) — the
+part that was actually missing was turning "the model said it doesn't
+know" from implicit prose into an explicit, testable boolean. That's a
+small code change but it's the difference between a UI that *looks*
+trustworthy and one where trustworthiness is actually verifiable.
+
 ## V1 — Basic PDF RAG
 
 - Single-PDF upload via Streamlit.
