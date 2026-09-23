@@ -8,8 +8,9 @@ from src.document_loader import PageText
 @dataclass
 class Chunk:
     text: str
-    page_number: int
+    page_number: int  # physical position in the PDF file
     chunk_index: int  # position within the document, for stable IDs
+    printed_page_number: int | None = None  # best-effort guess at the footer/printed number
 
 
 def chunk_pages(
@@ -36,7 +37,12 @@ def chunk_pages(
             end = min(start + chunk_size, len(words))
             chunk_text = " ".join(words[start:end])
             chunks.append(
-                Chunk(text=chunk_text, page_number=page.page_number, chunk_index=chunk_index)
+                Chunk(
+                    text=chunk_text,
+                    page_number=page.page_number,
+                    chunk_index=chunk_index,
+                    printed_page_number=page.printed_page_number,
+                )
             )
             chunk_index += 1
             if end == len(words):
