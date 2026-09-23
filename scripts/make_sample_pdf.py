@@ -1,12 +1,17 @@
-"""Generates a small synthetic insurance PDF for local demo/testing.
+"""Generates small synthetic insurance PDFs for local demo/testing.
 
 Not part of the app itself — run once during setup:
     python scripts/make_sample_pdf.py
+
+Produces two documents on different topics/types, useful for exercising V2's
+multi-document search and filtering without needing real documents:
+  - catastrophe_model_overview.pdf (document type: "Model Documentation")
+  - sample_auto_policy_summary.pdf (document type: "Policy")
 """
 
 import pymupdf as fitz
 
-PAGES = [
+CATASTROPHE_MODEL_PAGES = [
     (
         "Synthetic Catastrophe Model Overview",
         [
@@ -70,10 +75,49 @@ PAGES = [
     ),
 ]
 
+AUTO_POLICY_PAGES = [
+    (
+        "Sample Auto Policy Summary",
+        [
+            "This document is a synthetic, illustrative auto insurance policy "
+            "summary created for demonstration purposes only. It does not "
+            "describe any real policyholder, vehicle, or in-force coverage.",
+            "The policy provides liability, collision, and comprehensive "
+            "coverage for one private passenger vehicle, effective for a "
+            "twelve-month term.",
+            "The collision deductible on this sample policy is 500 dollars. "
+            "The comprehensive deductible on this sample policy is 250 dollars.",
+        ],
+    ),
+    (
+        "Coverage Details",
+        [
+            "Bodily injury liability limits are 100,000 dollars per person and "
+            "300,000 dollars per accident. Property damage liability limit is "
+            "50,000 dollars per accident.",
+            "Uninsured motorist bodily injury coverage matches the policy's "
+            "liability limits unless otherwise specified in the declarations.",
+            "Medical payments coverage of 5,000 dollars per person is included "
+            "for the named insured and passengers.",
+        ],
+    ),
+    (
+        "Exclusions",
+        [
+            "This sample policy does not cover intentional damage caused by the "
+            "policyholder, use of the vehicle for commercial ride-sharing "
+            "without an appropriate endorsement, or racing.",
+            "Wear and tear, mechanical breakdown, and damage from driving on a "
+            "route known to be flooded are also excluded under this sample "
+            "policy.",
+        ],
+    ),
+]
 
-def build_pdf(output_path: str = "data/sample_documents/catastrophe_model_overview.pdf"):
+
+def build_pdf(pages, output_path: str):
     doc = fitz.open()
-    for title, paragraphs in PAGES:
+    for title, paragraphs in pages:
         page = doc.new_page(width=612, height=792)  # US Letter
         y = 72
         page.insert_text((72, y), title, fontsize=16, fontname="helv")
@@ -88,4 +132,5 @@ def build_pdf(output_path: str = "data/sample_documents/catastrophe_model_overvi
 
 
 if __name__ == "__main__":
-    build_pdf()
+    build_pdf(CATASTROPHE_MODEL_PAGES, "data/sample_documents/catastrophe_model_overview.pdf")
+    build_pdf(AUTO_POLICY_PAGES, "data/sample_documents/sample_auto_policy_summary.pdf")
