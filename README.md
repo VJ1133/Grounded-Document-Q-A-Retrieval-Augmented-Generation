@@ -8,9 +8,10 @@ This project is being built version by version (V1 → V5) so that each stage
 demonstrates a distinct AI engineering concept, from a minimal single-document
 RAG pipeline up to an evaluated, production-style service.
 
-> **Status: V1 — Basic PDF RAG.** Single-document upload, retrieval, and
-> local LLM generation. No chat history, reranking, evaluation dashboard, or
-> API yet — those arrive in later versions.
+> **Status: V2 — Multi-Document RAG.** Upload and search across multiple
+> PDFs, tag them with a document type, and filter which documents/types a
+> question searches. No chat history, reranking, or evaluation dashboard yet
+> — those arrive in later versions.
 
 ## Why this project exists
 
@@ -20,7 +21,7 @@ right: chunking strategy, embeddings and semantic retrieval, grounding the
 model in retrieved evidence, citation accuracy, and — in later versions —
 measuring retrieval and answer quality rather than asserting it.
 
-## Architecture (V1)
+## Architecture (V2)
 
 ```
 User
@@ -29,26 +30,27 @@ User
 Streamlit UI
   │
   ▼
-PDF upload ──▶ PyMuPDF (text extraction, column/table-aware)
-  │
+PDF upload (one or many) ──▶ PyMuPDF (text extraction, column/table-aware)
+  │                            + document type tag (user-provided)
   ▼
 Chunking (fixed-size, per-page, overlapping)
-  │
+  │  + page number, printed page number, section (all best-effort)
   ▼
 Sentence Transformers (all-MiniLM-L6-v2 embeddings)
   │
   ▼
-ChromaDB (local persistent vector store)
+ChromaDB (local persistent vector store, shared across all documents)
   │
   ▼
-Similarity search (top-k chunks for the question)
+Similarity search — across the whole collection, or filtered to selected
+  document types / specific documents
   │
   ▼
 Generation — Ollama (local, gemma3:4b) OR Groq API (cloud, openai/gpt-oss-120b)
   answers ONLY from retrieved context, switchable live in the UI
   │
   ▼
-Answer
+Answer, with per-passage citations (document, page, section)
 ```
 
 Retrieval (PDF parsing, chunking, embeddings, vector search) always runs
@@ -73,8 +75,8 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 
 | Version | Focus |
 |---|---|
-| **V1** | Basic single-PDF RAG |
-| V2 | Multi-document RAG with metadata filtering |
+| V1 | Basic single-PDF RAG |
+| **V2** | Multi-document RAG with metadata filtering |
 | V3 | Citations and grounded-answer formatting |
 | V4 | Conversational RAG with follow-up questions |
 | V5 | Evaluation, hybrid retrieval/reranking, FastAPI, tests, logging, Docker |
@@ -135,6 +137,24 @@ answer-generation call goes to Groq, and only when that provider is chosen.
    streamlit run app/app.py
    ```
 
+## Multi-document features (V2)
+
+- **Upload several PDFs at once.** The uploader accepts multiple files; each
+  gets chunked, embedded, and indexed independently, and a question searches
+  across all of them together.
+- **Document type tagging.** Give a batch of uploads a type (e.g. `Policy`,
+  `Catalog`, `Regulatory Report`) before ingesting — this is a plain text
+  field you control, not auto-detected.
+- **Filtering.** The "Filter which documents to search" expander above the
+  question box lets you scope a question to specific document types and/or
+  specific documents, instead of always searching everything.
+- **Per-document management.** Each indexed document shows its type and
+  chunk count in the sidebar, with a `✕` button to remove just that one
+  document — no need to clear and re-upload everything.
+- **Section hints.** Each chunk carries a best-effort guess at which
+  heading/section it came from (the first short, non-tabular line on its
+  page), shown in the evidence panel when detected.
+
 ## Example questions to try
 
 - "What exposure characteristics does the model use?"
@@ -143,10 +163,8 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 - "What is the capital of France?" — a good test that the assistant correctly
   refuses to answer from outside knowledge.
 
-## Known limitations (V1)
+## Known limitations (V2)
 
-- Single-document context: uploading a second PDF is indexed but questions
-  aren't yet scoped/filtered per document (that's V2).
 - Fixed-size chunking (words, not semantic boundaries) — a simple starting
   point, not the final word on chunk quality.
 - No conversation memory — every question is independent (V4).
@@ -158,6 +176,13 @@ answer-generation call goes to Groq, and only when that provider is chosen.
   the sidebar for those cases.
 - Table/column-aware extraction (`src/document_loader.py`) is a heuristic,
   not a guarantee — unusual page layouts can still misattribute content.
+- Document type is a free-text field you set at upload time, not inferred
+  from content — typos create a new, separate filter option rather than
+  merging into an existing one.
+- Section detection is page-level and best-effort: a page with several
+  sections on it (common in dense catalogs) only gets tagged with the first
+  one, and headings PyMuPDF merges into a longer descriptive block won't be
+  picked up at all.
 
 ## Privacy
 
