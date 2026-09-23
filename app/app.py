@@ -1,7 +1,9 @@
-"""Insurance AI Knowledge Assistant — V1 Streamlit UI.
+"""Insurance AI Knowledge Assistant — V2 Streamlit UI.
 
-Upload a PDF, ask a question, get an answer grounded in that PDF using a
-local embedding model, ChromaDB, and a local Ollama LLM.
+Upload one or more PDFs, tag them with a document type, ask a question, and
+get an answer grounded across your whole document collection (or a filtered
+subset of it) using a local embedding model, ChromaDB, and a switchable
+Ollama/Groq LLM.
 """
 
 import os
@@ -97,9 +99,9 @@ with st.sidebar:
 active_model = OLLAMA_MODEL if st.session_state.provider == "ollama" else GROQ_MODEL
 hero_sub = (
     "Upload insurance PDFs and ask questions in plain English. Every answer is "
-    "retrieved from your own documents with a local embedding model and a local "
-    "vector database — generation runs locally via Ollama, or via a free hosted "
-    "API, your choice."
+    "retrieved across your whole document collection — or a filtered subset of "
+    "it — with a local embedding model and a local vector database. Generation "
+    "runs locally via Ollama, or via a free hosted API, your choice."
 )
 
 st.markdown(
@@ -143,28 +145,56 @@ with st.sidebar:
     if not groq_ok:
         st.caption("Get a free key at console.groq.com and add it to a .env file.")
 
-    st.markdown('<div class="section-label">Upload Document</div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("PDF file", type=["pdf"], label_visibility="collapsed")
+    st.markdown('<div class="section-label">Upload Documents</div>', unsafe_allow_html=True)
+    document_type_input = st.text_input(
+        "Document type",
+        value="General",
+        help="Applied to whichever files you ingest next. Used later for filtering search.",
+    )
+    uploaded_files = st.file_uploader(
+        "PDF files",
+        type=["pdf"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
 
-    if uploaded_file is not None:
-        already_indexed = store.has_document(uploaded_file.name)
-        if already_indexed:
-            st.info(f"'{uploaded_file.name}' is already indexed.")
-        elif st.button("Ingest document", type="primary", use_container_width=True):
-            with st.spinner("Extracting text, chunking, and embedding..."):
-                pages = load_pdf_bytes(uploaded_file.getvalue())
-                chunks = chunk_pages(pages)
-                store.add_document(uploaded_file.name, chunks)
-            st.success(f"Indexed {len(chunks)} chunks from {len(pages)} pages.")
+    if uploaded_files:
+        new_files = [f for f in uploaded_files if not store.has_document(f.name)]
+        already_indexed_names = [f.name for f in uploaded_files if f not in new_files]
+        for name in already_indexed_names:
+            st.info(f"'{name}' is already indexed.")
+
+        if new_files and st.button(
+            f"Ingest {len(new_files)} document(s)", type="primary", use_container_width=True
+        ):
+            with st.spinner(f"Extracting text, chunking, and embedding {len(new_files)} file(s)..."):
+                total_chunks = 0
+                for f in new_files:
+                    pages = load_pdf_bytes(f.getvalue())
+                    chunks = chunk_pages(pages)
+                    store.add_document(f.name, chunks, document_type=document_type_input.strip())
+                    total_chunks += len(chunks)
+            st.success(f"Indexed {total_chunks} chunks across {len(new_files)} document(s).")
             st.rerun()
 
     st.markdown('<div class="section-label">Indexed Documents</div>', unsafe_allow_html=True)
-    names = store.document_names()
-    if not names:
+    summaries = store.document_summaries()
+    if not summaries:
         st.caption("No documents uploaded yet.")
     else:
-        for name in names:
-            st.markdown(f'<div class="doc-pill">📄 {name}</div>', unsafe_allow_html=True)
+        for doc in summaries:
+            col_name, col_del = st.columns([6, 1])
+            with col_name:
+                st.markdown(
+                    f'<div class="doc-pill">📄 {doc["document_name"]}'
+                    f'<br><span style="opacity:0.6;font-size:0.8em">'
+                    f'{doc["document_type"]} · {doc["chunk_count"]} chunks</span></div>',
+                    unsafe_allow_html=True,
+                )
+            with col_del:
+                if st.button("X", key=f"del_{doc['document_name']}", help="Remove this document"):
+                    store.delete_document(doc["document_name"])
+                    st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Clear all documents", use_container_width=True):
@@ -176,6 +206,25 @@ with st.sidebar:
 # --------------------------------------------------------------------- main
 
 st.markdown('<div class="section-label">Ask a Question</div>', unsafe_allow_html=True)
+
+available_types = store.document_types()
+available_names = store.document_names()
+filter_types: list[str] = []
+filter_names: list[str] = []
+if available_types:
+    with st.expander("Filter which documents to search (optional)"):
+        filter_types = st.multiselect(
+            "Only search these document types",
+            options=available_types,
+            default=[],
+            help="Leave empty to search all document types.",
+        )
+        filter_names = st.multiselect(
+            "Only search these specific documents",
+            options=available_names,
+            default=[],
+            help="Leave empty to search all indexed documents.",
+        )
 
 with st.form("ask_form", clear_on_submit=False):
     col1, col2 = st.columns([5, 1])
@@ -201,7 +250,13 @@ if ask_clicked and question.strip():
     else:
         with st.spinner("Retrieving relevant passages and generating an answer..."):
             try:
-                result = answer_question(store, question.strip(), provider=provider)
+                result = answer_question(
+                    store,
+                    question.strip(),
+                    provider=provider,
+                    document_types=filter_types or None,
+                    document_names=filter_names or None,
+                )
             except Exception as e:
                 st.error(f"Generation failed: {e}")
                 result = None
@@ -226,8 +281,10 @@ for q, result in st.session_state.history:
                 page_note = f"page {s['display_page']}"
                 if s["printed_page_number"] and s["printed_page_number"] != s["page_number"]:
                     page_note += f" (file position: page {s['page_number']})"
+                if s.get("section"):
+                    page_note += f" · {s['section']}"
                 st.markdown(
-                    f"**Passage {i} — {s['document_name']}, {page_note}** "
+                    f"**Passage {i} — {s['document_name']} ({s['document_type']}), {page_note}** "
                     f"(distance: {s['distance']:.3f})"
                 )
                 st.caption(s["text"])

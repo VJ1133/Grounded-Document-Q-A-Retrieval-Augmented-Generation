@@ -202,16 +202,25 @@ section.main > div.block-container {
 
 /* ---- doc pill list ---- */
 .doc-pill {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   font-size: 0.85rem;
   padding: 8px 12px;
   margin-bottom: 6px;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: rgba(255,255,255,0.02);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+/* Streamlit sidebar columns default to a content-driven min-width, which
+   overflows a narrow sidebar once any cell has non-trivial text (e.g. a
+   document name + type + chunk count) and silently produces a horizontal
+   scrollbar instead of wrapping. Force them to actually respect the
+   container width. */
+section[data-testid="stSidebar"] [data-testid="column"] {
+  min-width: 0 !important;
+  width: auto !important;
 }
 
 /* ---- buttons ---- */
