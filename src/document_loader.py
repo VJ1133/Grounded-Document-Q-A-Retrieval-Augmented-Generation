@@ -69,6 +69,31 @@ def _detect_printed_page_number(text: str) -> int | None:
     return number if number <= _MAX_PLAUSIBLE_PRINTED_PAGE else None
 
 
+_MAX_SECTION_WORDS = 12
+
+
+def _detect_section(text: str) -> str | None:
+    """Best-effort guess at which section/heading a page belongs to.
+
+    Takes the first non-empty line of the page's (already column-reordered)
+    text as the section label, if it looks like a heading rather than a
+    sentence of body text -- short, and not a formatted table row. This is a
+    page-level approximation: a page with multiple sections on it (common in
+    dense catalogs) only gets the first one, and headings that PyMuPDF merged
+    into a longer descriptive block won't be picked up. It's a browsing aid
+    for citations, not a guarantee -- None means "no confident guess."
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    first_line = lines[0].strip()
+    if "|" in first_line:  # a formatted table row, not a heading
+        return None
+    if len(first_line.split()) > _MAX_SECTION_WORDS:
+        return None
+    return first_line
+
+
 def _format_table(rows: list[list[str | None]]) -> str:
     lines = []
     for row in rows:
@@ -132,6 +157,7 @@ class PageText:
     page_number: int  # 1-indexed physical position in the PDF file
     text: str
     printed_page_number: int | None = None  # best-effort guess at the footer/printed number
+    section: str | None = None  # best-effort guess at the page's heading/section
 
 
 def _pages_from_doc(doc) -> list[PageText]:
@@ -144,6 +170,7 @@ def _pages_from_doc(doc) -> list[PageText]:
                     page_number=index + 1,
                     text=text,
                     printed_page_number=_detect_printed_page_number(text),
+                    section=_detect_section(text),
                 )
             )
     return pages

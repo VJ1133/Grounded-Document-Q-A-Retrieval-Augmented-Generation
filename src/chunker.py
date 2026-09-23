@@ -11,6 +11,7 @@ class Chunk:
     page_number: int  # physical position in the PDF file
     chunk_index: int  # position within the document, for stable IDs
     printed_page_number: int | None = None  # best-effort guess at the footer/printed number
+    section: str | None = None  # best-effort guess at the page's heading/section
 
 
 def chunk_pages(
@@ -42,6 +43,7 @@ def chunk_pages(
                     page_number=page.page_number,
                     chunk_index=chunk_index,
                     printed_page_number=page.printed_page_number,
+                    section=page.section,
                 )
             )
             chunk_index += 1
