@@ -4,9 +4,9 @@ Generation is pluggable between two providers:
   - "ollama": a local model via Ollama. Free, fully private, but limited by
     whatever model fits on your machine's RAM (small models struggle with
     precise lookups in dense, table-heavy context).
-  - "groq": a free hosted API (Llama 3.3 70B). Requires a GROQ_API_KEY and
-    sends retrieved passage text to Groq's servers for that call -- a real
-    privacy tradeoff in exchange for a much larger, more capable model.
+  - "groq": a free hosted API (openai/gpt-oss-120b). Requires a GROQ_API_KEY
+    and sends retrieved passage text to Groq's servers for that call -- a
+    real privacy tradeoff in exchange for a much larger, more capable model.
 
 Embeddings and vector search (src/embeddings.py, src/vector_store.py) always
 run locally regardless of which generation provider is selected.
@@ -42,8 +42,10 @@ class RagAnswer:
 def _build_context(matches: list[dict]) -> str:
     blocks = []
     for i, m in enumerate(matches, start=1):
+        section_note = f" | section: {m['section']}" if m.get("section") else ""
         blocks.append(
-            f"[Passage {i} | {m['document_name']} | page {m['display_page']}]\n{m['text']}"
+            f"[Passage {i} | {m['document_name']} | page {m['display_page']}{section_note}]\n"
+            f"{m['text']}"
         )
     return "\n\n".join(blocks)
 
@@ -93,17 +95,25 @@ def answer_question(
     question: str,
     top_k: int = 8,
     provider: str = "ollama",
+    document_types: list[str] | None = None,
+    document_names: list[str] | None = None,
 ) -> RagAnswer:
     if provider not in _PROVIDERS:
         raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
 
-    matches = vector_store.query(question, top_k=top_k)
+    matches = vector_store.query(
+        question, top_k=top_k, document_types=document_types, document_names=document_names
+    )
 
     if not matches:
-        return RagAnswer(
-            answer="No documents have been uploaded yet, so there is nothing to search.",
-            sources=[],
-        )
+        if (document_types or document_names) and vector_store.count() > 0:
+            message = (
+                "No documents match the current filter, so there is nothing to search. "
+                "Clear or adjust the document filter and try again."
+            )
+        else:
+            message = "No documents have been uploaded yet, so there is nothing to search."
+        return RagAnswer(answer=message, sources=[])
 
     context = _build_context(matches)
     user_prompt = (
