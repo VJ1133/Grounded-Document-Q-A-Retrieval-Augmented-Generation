@@ -24,12 +24,22 @@ load_dotenv()  # reads GROQ_API_KEY etc. from a local .env file, if present
 OLLAMA_MODEL = "gemma3:4b"
 GROQ_MODEL = "openai/gpt-oss-120b"
 
+# Returned verbatim by the model (and by answer_question's own early exits)
+# whenever the retrieved context can't support an answer. Matching on this
+# exact string is how RagAnswer.grounded is computed below -- it must stay
+# in sync with what the prompt asks the model to say.
+INSUFFICIENT_CONTEXT_MESSAGE = (
+    "The uploaded document(s) do not contain enough information to answer this question."
+)
+
 SYSTEM_PROMPT = (
     "You are an insurance document assistant. Answer the user's question "
     "using ONLY the context passages provided below. "
     "If the context does not contain enough information to answer, say clearly: "
-    "\"The uploaded document(s) do not contain enough information to answer this question.\" "
-    "Do not use outside knowledge. Do not guess. Keep answers concise and factual."
+    f'"{INSUFFICIENT_CONTEXT_MESSAGE}" '
+    "Do not use outside knowledge. Do not guess. Keep answers concise and factual. "
+    "Do not include passage numbers or citation markers in your answer text -- "
+    "sources are shown separately to the user, so just answer in plain prose."
 )
 
 
@@ -37,6 +47,12 @@ SYSTEM_PROMPT = (
 class RagAnswer:
     answer: str
     sources: list[dict] = field(default_factory=list)
+    # False whenever no real, source-backed answer was given (the model
+    # explicitly declined, or there was nothing to search in the first
+    # place). Set explicitly by answer_question rather than inferred, since
+    # the "nothing to search" cases use different wording than the model's
+    # own refusal message.
+    grounded: bool = True
 
 
 def _build_context(matches: list[dict]) -> str:
@@ -113,15 +129,16 @@ def answer_question(
             )
         else:
             message = "No documents have been uploaded yet, so there is nothing to search."
-        return RagAnswer(answer=message, sources=[])
+        return RagAnswer(answer=message, sources=[], grounded=False)
 
     context = _build_context(matches)
     user_prompt = (
         f"Context passages:\n\n{context}\n\n"
         f"Question: {question}\n\n"
-        "Answer using only the context above, and mention which passage(s) support your answer."
+        "Answer using only the context above."
     )
 
     answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
+    grounded = INSUFFICIENT_CONTEXT_MESSAGE.lower() not in answer_text.lower()
 
-    return RagAnswer(answer=answer_text, sources=matches)
+    return RagAnswer(answer=answer_text, sources=matches, grounded=grounded)
