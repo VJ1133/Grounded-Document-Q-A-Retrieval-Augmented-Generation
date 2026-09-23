@@ -1,12 +1,28 @@
-"""Ties retrieval and local generation together into a single answer() call."""
+"""Ties retrieval and generation together into a single answer() call.
 
+Generation is pluggable between two providers:
+  - "ollama": a local model via Ollama. Free, fully private, but limited by
+    whatever model fits on your machine's RAM (small models struggle with
+    precise lookups in dense, table-heavy context).
+  - "groq": a free hosted API (Llama 3.3 70B). Requires a GROQ_API_KEY and
+    sends retrieved passage text to Groq's servers for that call -- a real
+    privacy tradeoff in exchange for a much larger, more capable model.
+
+Embeddings and vector search (src/embeddings.py, src/vector_store.py) always
+run locally regardless of which generation provider is selected.
+"""
+
+import os
 from dataclasses import dataclass, field
 
-import ollama
+from dotenv import load_dotenv
 
 from src.vector_store import VectorStore
 
+load_dotenv()  # reads GROQ_API_KEY etc. from a local .env file, if present
+
 OLLAMA_MODEL = "gemma3:4b"
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 SYSTEM_PROMPT = (
     "You are an insurance document assistant. Answer the user's question "
@@ -27,12 +43,60 @@ def _build_context(matches: list[dict]) -> str:
     blocks = []
     for i, m in enumerate(matches, start=1):
         blocks.append(
-            f"[Passage {i} | {m['document_name']} | page {m['page_number']}]\n{m['text']}"
+            f"[Passage {i} | {m['document_name']} | page {m['display_page']}]\n{m['text']}"
         )
     return "\n\n".join(blocks)
 
 
-def answer_question(vector_store: VectorStore, question: str, top_k: int = 5) -> RagAnswer:
+def _generate_with_ollama(system_prompt: str, user_prompt: str) -> str:
+    import ollama
+
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    return response["message"]["content"]
+
+
+def _generate_with_groq(system_prompt: str, user_prompt: str) -> str:
+    from groq import Groq
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY is not set. Get a free key at console.groq.com and add it "
+            "to a .env file (GROQ_API_KEY=...) or your environment variables."
+        )
+
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    return response.choices[0].message.content
+
+
+_PROVIDERS = {
+    "ollama": _generate_with_ollama,
+    "groq": _generate_with_groq,
+}
+
+
+def answer_question(
+    vector_store: VectorStore,
+    question: str,
+    top_k: int = 8,
+    provider: str = "ollama",
+) -> RagAnswer:
+    if provider not in _PROVIDERS:
+        raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
+
     matches = vector_store.query(question, top_k=top_k)
 
     if not matches:
@@ -48,13 +112,6 @@ def answer_question(vector_store: VectorStore, question: str, top_k: int = 5) ->
         "Answer using only the context above, and mention which passage(s) support your answer."
     )
 
-    response = ollama.chat(
-        model=OLLAMA_MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-    answer_text = response["message"]["content"]
+    answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
 
     return RagAnswer(answer=answer_text, sources=matches)
