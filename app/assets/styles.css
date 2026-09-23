@@ -168,6 +168,37 @@ section.main > div.block-container {
   font-size: 1.02rem;
 }
 
+.answer-card--ungrounded {
+  border-left-color: #e0b558;
+  background: linear-gradient(160deg, rgba(224,181,88,0.08), rgba(14,17,24,0.6));
+}
+
+.grounding-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Sora', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+
+.grounding-badge--grounded {
+  color: #58e08a;
+  background: rgba(88,224,138,0.10);
+  border: 1px solid rgba(88,224,138,0.25);
+}
+
+.grounding-badge--ungrounded {
+  color: #e0b558;
+  background: rgba(224,181,88,0.10);
+  border: 1px solid rgba(224,181,88,0.25);
+}
+
 .source-chip {
   display: inline-flex;
   align-items: center;

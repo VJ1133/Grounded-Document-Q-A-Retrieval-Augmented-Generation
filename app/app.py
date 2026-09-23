@@ -265,9 +265,24 @@ if ask_clicked and question.strip():
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+if st.session_state.history:
+    show_scores = st.checkbox("Show retrieval scores (debug)", value=False)
+else:
+    show_scores = False
+
 for q, result in st.session_state.history:
     st.markdown(f"**{q}**")
-    st.markdown(f'<div class="answer-card">{result.answer}</div>', unsafe_allow_html=True)
+    if result.grounded:
+        badge = '<span class="grounding-badge grounding-badge--grounded">✓ Grounded</span>'
+        card_class = "answer-card"
+    else:
+        badge = (
+            '<span class="grounding-badge grounding-badge--ungrounded">'
+            "⚠ Not supported by documents</span>"
+        )
+        card_class = "answer-card answer-card--ungrounded"
+    st.markdown(badge, unsafe_allow_html=True)
+    st.markdown(f'<div class="{card_class}">{result.answer}</div>', unsafe_allow_html=True)
 
     if result.sources:
         chips = "".join(
@@ -283,9 +298,10 @@ for q, result in st.session_state.history:
                     page_note += f" (file position: page {s['page_number']})"
                 if s.get("section"):
                     page_note += f" · {s['section']}"
+                score_note = f" (distance: {s['distance']:.3f})" if show_scores else ""
                 st.markdown(
-                    f"**Passage {i} — {s['document_name']} ({s['document_type']}), {page_note}** "
-                    f"(distance: {s['distance']:.3f})"
+                    f"**Passage {i} — {s['document_name']} ({s['document_type']}), "
+                    f"{page_note}**{score_note}"
                 )
                 st.caption(s["text"])
     st.markdown("<hr style='border-color: rgba(201,162,75,0.12)'>", unsafe_allow_html=True)
@@ -296,7 +312,7 @@ privacy_note = (
     else "Retrieval runs locally; answers are generated via the Groq API."
 )
 st.markdown(
-    f'<div class="app-footer">Insurance AI Knowledge Assistant · V1 Basic RAG · '
+    f'<div class="app-footer">Insurance AI Knowledge Assistant · V3 Citations &amp; Grounding · '
     f"{privacy_note}</div>",
     unsafe_allow_html=True,
 )
