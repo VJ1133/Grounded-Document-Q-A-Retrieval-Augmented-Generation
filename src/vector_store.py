@@ -19,9 +19,13 @@ class VectorStore:
             return
         embeddings = embed_texts([c.text for c in chunks])
         ids = [f"{document_name}::{c.chunk_index}" for c in chunks]
-        metadatas = [
-            {"document_name": document_name, "page_number": c.page_number} for c in chunks
-        ]
+        metadatas = []
+        for c in chunks:
+            metadata = {"document_name": document_name, "page_number": c.page_number}
+            # Chroma metadata values can't be None, so only add the key when detected.
+            if c.printed_page_number is not None:
+                metadata["printed_page_number"] = c.printed_page_number
+            metadatas.append(metadata)
         self._collection.add(
             ids=ids,
             embeddings=embeddings,
@@ -40,11 +44,16 @@ class VectorStore:
         metas = result.get("metadatas") or [[]]
         dists = result.get("distances") or [[]]
         for text, meta, distance in zip(docs[0], metas[0], dists[0]):
+            page_number = meta.get("page_number")
+            printed_page_number = meta.get("printed_page_number")
             matches.append(
                 {
                     "text": text,
                     "document_name": meta.get("document_name"),
-                    "page_number": meta.get("page_number"),
+                    "page_number": page_number,
+                    "printed_page_number": printed_page_number,
+                    # display_page is what citations should show to a user
+                    "display_page": printed_page_number if printed_page_number else page_number,
                     "distance": distance,
                 }
             )
