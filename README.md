@@ -42,8 +42,8 @@ Sentence Transformers (all-MiniLM-L6-v2 embeddings)
 ChromaDB (local persistent vector store, shared across all documents)
   │
   ▼
-Similarity search — across the whole collection, or filtered to selected
-  document types / specific documents
+Hybrid retrieval — semantic (cosine) + keyword (BM25) rankings fused via
+  Reciprocal Rank Fusion, across the whole collection or a filtered subset
   │
   ▼
 Generation — Ollama (local, gemma3:4b) OR Groq API (cloud, openai/gpt-oss-120b)
@@ -67,6 +67,7 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 | Groq API | Optional hosted LLM inference (free tier, `openai/gpt-oss-120b`) — meaningfully more accurate at precise lookups in dense/tabular context than a small local model, at the cost of sending retrieved passage text to a third party for that call |
 | Sentence Transformers | Local embedding model (always runs locally, regardless of generation provider) |
 | ChromaDB | Local vector database |
+| rank_bm25 | Keyword scoring for hybrid retrieval (fused with semantic search via RRF) |
 | PyMuPDF | PDF text extraction, with column/table-aware reading order |
 | FastAPI | Added in V5 for API serving |
 | Docker | Added in V5 for packaging |
@@ -174,12 +175,49 @@ answer-generation call goes to Groq, and only when that provider is chosen.
   to inline its own passage numbers/citation markers — sources are always
   rendered by the UI (chips + evidence panel), so the answer prose and the
   citation list don't duplicate or disagree with each other.
+- **Exact passage highlighting.** With retrieval sometimes returning 8
+  passages, knowing *which one* actually backs the answer matters. The
+  model reports which passage number(s) it used via a structured trailer
+  parsed out of its response (`USED_PASSAGES: 1,3` — never shown to you as
+  raw text). Those specific passages get a highlighted gold `★` chip and
+  are marked "★ USED IN ANSWER" in the evidence panel, sorted first;
+  everything else retrieved-but-unused is shown dimmed underneath instead
+  of all passages looking equally relevant.
 - **Repeatable grounding test set.** `scripts/test_grounding.py` runs a
   curated list of questions (some answerable, some deliberately
   out-of-scope) against whichever documents are indexed and reports
   pass/fail against the expected grounded/ungrounded label for each —
   a manual-run, live-LLM check that a code or prompt change didn't quietly
   break refusal behavior.
+
+## Hybrid retrieval (pulled forward from V5)
+
+Pure semantic search has a real weakness this project hit in practice:
+on a document that's mostly a large table repeated across many pages (a
+state-by-state coverage comparison, for example), the chunk containing the
+answer to "what is the minimum PIP for Utah?" doesn't necessarily *embed*
+as being about Utah — its meaning gets diluted by a dozen other states'
+near-identical notes packed into the same chunk. The literal word "Utah"
+was sitting right there in the text, but semantic similarity alone ranked
+it below completely unrelated states.
+
+`VectorStore.query()` now combines two independent rankings over the same
+candidate pool, fused with **Reciprocal Rank Fusion (RRF)**:
+
+- **Semantic:** cosine distance between the question and each chunk's
+  embedding (unchanged from before).
+- **Keyword:** a BM25 score between the question's tokens and each chunk's
+  text — this is what actually catches an exact term like a state name or
+  product code that semantic search can bury.
+
+RRF combines the two rank *orderings* rather than trying to compare a
+cosine distance and a BM25 score on the same numeric scale (they aren't
+comparable), which makes the result robust even when one signal is noisy
+for a given question. This fixed a real, reproducible failure case:
+verified against the actual NAIC auto insurance report, "Utah minimum
+PIP" went from not appearing in the top 15 out of 828 chunks (pure
+semantic) to rank 3 (hybrid) — a correct, grounded answer citing the
+right passage.
 
 ## Example questions to try
 
@@ -201,6 +239,22 @@ answer-generation call goes to Groq, and only when that provider is chosen.
   message — if a model ever phrases a refusal differently (or a prompt
   change alters the exact wording), grounding detection silently breaks
   until `INSUFFICIENT_CONTEXT_MESSAGE` and the prompt are kept in sync.
+  It also can't catch the harder case where the model gives a specific,
+  wrong-sounding answer that isn't actually a real quote from any
+  retrieved passage (a genuine hallucination that isn't a refusal) — there
+  is no faithfulness check verifying the answer's claims against the
+  source text.
+- Hybrid retrieval (`VectorStore.query()`) rebuilds a BM25 index over the
+  full filtered candidate pool on every query, in-memory, from scratch.
+  Fine at this project's scale (hundreds to low thousands of chunks); a
+  much larger corpus would need a persistent keyword index instead of
+  rebuilding one per question.
+- Cited-passage highlighting depends on the model correctly following the
+  `USED_PASSAGES: 1,3` trailer instruction. If a model omits or malforms
+  it, `_extract_used_passages()` degrades gracefully (no passage gets
+  highlighted, every source shows with equal weight) rather than crashing
+  or showing wrong information — but you lose the "which passage exactly"
+  signal for that answer.
 - Local generation (`gemma3:4b`) is noticeably weaker than the Groq option at
   precise lookups in dense, table-heavy documents (e.g. exact values in a
   price list) — it can answer "insufficient information" even when the right

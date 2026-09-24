@@ -1,5 +1,56 @@
 # Changelog
 
+## Exact passage highlighting
+
+- Fixes a real usability regression from V3's own "clean prose" change:
+  removing the model's inline `(Passage 3)` citations also removed the
+  only way to tell which of the (often 8) retrieved passages actually
+  backed a given answer, forcing a manual scan through the whole evidence
+  panel.
+- The model now reports which passage(s) it used via a structured
+  `USED_PASSAGES: 1,3` trailer, parsed out of the response by
+  `_extract_used_passages()` and never shown to the user as raw text.
+- Cited passages get a highlighted gold chip and an "★ USED IN ANSWER" tag
+  in the evidence panel, sorted first; everything else retrieved-but-unused
+  is shown dimmed underneath.
+- Degrades gracefully if a model omits or malforms the trailer (no crash,
+  just no highlighting for that answer -- same as before this feature).
+- New tests in `tests/test_rag_pipeline.py` cover trailer parsing
+  (with/without `USED_PASSAGES`, the `none` case) and that `sources[i]["cited"]`
+  gets set correctly end-to-end.
+
+## Hybrid retrieval (pulled forward from V5)
+
+- `VectorStore.query()` now fuses two independent rankings via Reciprocal
+  Rank Fusion: semantic cosine similarity (as before) and a new BM25
+  keyword score over the same filtered candidate pool.
+- Fixes a real, reproducible bug found via user testing: on the actual
+  NAIC auto insurance report, "what is the minimum PIP for Utah?" failed
+  completely under pure semantic search — the correct chunk (a literal
+  "Utah – There is a $3,000 minimum for PIP" sentence) didn't rank in the
+  top 15 of 828 chunks, because it sits in a dense list of ~15 different
+  states' near-identical PIP notes, and the chunk's overall embedding
+  represented "generic multi-state PIP notes" rather than being
+  distinctly about Utah. The model, faced with unrelated retrieved
+  context, hallucinated a wrong dollar figure instead of refusing --
+  exposing that `grounded` only detects explicit refusal, not unfaithful
+  generation.
+- After the fix: the same chunk ranks #3 (well within the default top-8),
+  and the full pipeline returns the correct, grounded answer.
+- New `tests/test_vector_store.py::test_hybrid_retrieval_surfaces_exact_term_diluted_by_similar_chunks`
+  reproduces this failure mode in miniature as a permanent regression test.
+
+**What I learned:** this is the clearest example yet of "test with a real,
+messy document, not just clean synthetic ones." A demo PDF would never
+surface this bug -- it took an actual 230-page government report with a
+genuinely repetitive table structure to expose that semantic search alone
+can fail completely on exact-term lookups, even when the literal answer
+text is sitting in the corpus. It's also a good illustration of why
+`grounded` -- a check for explicit refusal -- is a different, weaker
+guarantee than faithfulness -- a check that the answer's claims are
+actually backed by the retrieved text. The project has the former; it
+doesn't yet have the latter.
+
 ## V3 — Citations & Grounding
 
 - `RagAnswer.grounded`: an explicit boolean, set by `answer_question()`
