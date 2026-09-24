@@ -1,5 +1,16 @@
 # Changelog
 
+## V4 -- Conversational follow-ups
+
+- `answer_question(..., history=[(question, answer), ...])` rewrites a
+  follow-up into a standalone question (last 4 turns, answers truncated)
+  via the selected provider, then retrieves and answers on that query.
+- No history means no extra LLM call; a failed/empty rewrite falls back to
+  the raw question, so it can never be worse than V3.
+- `RagAnswer.search_query` records what was actually searched; the UI shows
+  "Searched as: ..." when it differs, and adds a "New conversation" button.
+- Tests cover rewrite, skip-when-no-history, and fallback on failure.
+
 ## Exact passage highlighting
 
 - Fixes a real usability regression from V3's own "clean prose" change:

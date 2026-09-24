@@ -256,6 +256,8 @@ if ask_clicked and question.strip():
                     provider=provider,
                     document_types=filter_types or None,
                     document_names=filter_names or None,
+                    # session history is newest-first; the pipeline wants oldest-first
+                    history=[(q, r.answer) for q, r in reversed(st.session_state.history)],
                 )
             except Exception as e:
                 st.error(f"Generation failed: {e}")
@@ -266,12 +268,17 @@ if ask_clicked and question.strip():
 st.markdown("<br>", unsafe_allow_html=True)
 
 if st.session_state.history:
+    if st.button("New conversation", help="Forget earlier questions so follow-ups start fresh"):
+        st.session_state.history = []
+        st.rerun()
     show_scores = st.checkbox("Show retrieval scores (debug)", value=False)
 else:
     show_scores = False
 
 for q, result in st.session_state.history:
     st.markdown(f"**{q}**")
+    if result.search_query and result.search_query != q:
+        st.caption(f"🔎 Searched as: {result.search_query}")
     if result.grounded:
         badge = '<span class="grounding-badge grounding-badge--grounded">✓ Grounded</span>'
         card_class = "answer-card"
@@ -343,7 +350,7 @@ privacy_note = (
     else "Retrieval runs locally; answers are generated via the Groq API."
 )
 st.markdown(
-    f'<div class="app-footer">Insurance AI Knowledge Assistant · V3 Citations &amp; Grounding · '
+    f'<div class="app-footer">Insurance AI Knowledge Assistant · V4 Conversational RAG · '
     f"{privacy_note}</div>",
     unsafe_allow_html=True,
 )

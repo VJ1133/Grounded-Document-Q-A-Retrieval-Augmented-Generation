@@ -55,9 +55,29 @@ SYSTEM_PROMPT = (
 )
 
 
+REWRITE_SYSTEM_PROMPT = (
+    "You rewrite follow-up questions for a document search system. Given a "
+    "conversation and a new question, output ONE standalone question that "
+    "carries all the context needed to be understood without the "
+    "conversation (resolve pronouns like 'it'/'that' and omitted subjects). "
+    "If the new question is already standalone, output it unchanged. "
+    "Output only the question text -- no quotes, no explanation, and do not "
+    "answer it."
+)
+
+# How many prior (question, answer) turns are shown to the rewriter, and how
+# much of each answer -- enough to resolve references, small enough to keep
+# the prompt cheap and on-topic.
+MAX_HISTORY_TURNS = 4
+MAX_HISTORY_ANSWER_CHARS = 400
+
+
 @dataclass
 class RagAnswer:
     answer: str
+    # What was actually searched for. Differs from the user's raw question
+    # only when a follow-up was rewritten into a standalone question.
+    search_query: str = ""
     sources: list[dict] = field(default_factory=list)
     # False whenever no real, source-backed answer was given (the model
     # explicitly declined, or there was nothing to search in the first
@@ -86,6 +106,30 @@ def _extract_used_passages(answer_text: str) -> tuple[str, set[int]]:
         if token.isdigit():
             numbers.add(int(token))
     return clean_text, numbers
+
+
+def _rewrite_followup(
+    provider: str, question: str, history: list[tuple[str, str]]
+) -> str:
+    """Rewrites a follow-up into a standalone question using recent turns.
+
+    Falls back to the original question on any failure or empty output, so a
+    flaky rewrite never blocks answering (worst case: same behaviour as V3).
+    """
+    turns = history[-MAX_HISTORY_TURNS:]
+    transcript = "\n".join(
+        f"User: {q}\nAssistant: {a[:MAX_HISTORY_ANSWER_CHARS]}" for q, a in turns
+    )
+    prompt = (
+        f"Conversation:\n{transcript}\n\n"
+        f"New question: {question}\n\nStandalone question:"
+    )
+    try:
+        rewritten = _PROVIDERS[provider](REWRITE_SYSTEM_PROMPT, prompt).strip()
+    except Exception:
+        return question
+    rewritten = rewritten.splitlines()[0].strip().strip('"') if rewritten else ""
+    return rewritten or question
 
 
 def _build_context(matches: list[dict]) -> str:
@@ -146,12 +190,18 @@ def answer_question(
     provider: str = "ollama",
     document_types: list[str] | None = None,
     document_names: list[str] | None = None,
+    history: list[tuple[str, str]] | None = None,
 ) -> RagAnswer:
+    """`history` is prior (question, answer) turns, oldest first. When given,
+    the question is first rewritten into a standalone query so retrieval
+    works for follow-ups like "what about for Texas?"."""
     if provider not in _PROVIDERS:
         raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
 
+    search_query = _rewrite_followup(provider, question, history) if history else question
+
     matches = vector_store.query(
-        question, top_k=top_k, document_types=document_types, document_names=document_names
+        search_query, top_k=top_k, document_types=document_types, document_names=document_names
     )
 
     if not matches:
@@ -162,7 +212,7 @@ def answer_question(
             )
         else:
             message = "No documents have been uploaded yet, so there is nothing to search."
-        return RagAnswer(answer=message, sources=[], grounded=False)
+        return RagAnswer(answer=message, search_query=search_query, sources=[], grounded=False)
 
     context = _build_context(matches)
     user_prompt = (
@@ -182,4 +232,6 @@ def answer_question(
     for i, m in enumerate(matches, start=1):
         m["cited"] = i in cited_passage_numbers
 
-    return RagAnswer(answer=answer_text, sources=matches, grounded=grounded)
+    return RagAnswer(
+        answer=answer_text, search_query=search_query, sources=matches, grounded=grounded
+    )

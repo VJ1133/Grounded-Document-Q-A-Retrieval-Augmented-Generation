@@ -8,10 +8,10 @@ This project is being built version by version (V1 → V5) so that each stage
 demonstrates a distinct AI engineering concept, from a minimal single-document
 RAG pipeline up to an evaluated, production-style service.
 
-> **Status: V3 — Citations & Grounding.** Every answer is explicitly marked
-> grounded or not, backed by a retrieval evidence panel and a repeatable
-> grounding test set. No chat history, reranking, or evaluation dashboard yet
-> — those arrive in later versions.
+> **Status: V4 — Conversational RAG.** Follow-up questions ("what about for
+> Texas?") are rewritten into standalone queries using recent chat turns
+> before retrieval, with a "New conversation" reset. Reranking, an
+> evaluation dashboard, and the API/Docker packaging arrive in V5.
 
 ## Why this project exists
 
@@ -78,8 +78,8 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 |---|---|
 | V1 | Basic single-PDF RAG |
 | V2 | Multi-document RAG with metadata filtering |
-| **V3** | Citations and grounded-answer formatting |
-| V4 | Conversational RAG with follow-up questions |
+| V3 | Citations and grounded-answer formatting |
+| **V4** | Conversational RAG with follow-up questions |
 | V5 | Evaluation, hybrid retrieval/reranking, FastAPI, tests, logging, Docker |
 
 ## Setup

@@ -103,3 +103,58 @@ def test_answer_question_marks_cited_sources(tmp_path, monkeypatch):
 
     assert "USED_PASSAGES" not in result.answer
     assert result.sources[0]["cited"] is True
+
+
+def test_followup_is_rewritten_before_retrieval(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    calls = []
+
+    def fake_provider(system, user):
+        calls.append(system)
+        if system.startswith("You rewrite"):
+            return "What is the collision deductible?"
+        return "It is $500.\nUSED_PASSAGES: 1"
+
+    monkeypatch.setattr("src.rag_pipeline._PROVIDERS", {"ollama": fake_provider})
+
+    result = answer_question(
+        store,
+        "how much is it?",
+        provider="ollama",
+        history=[("Tell me about collision coverage", "It has a deductible.")],
+    )
+
+    assert result.search_query == "What is the collision deductible?"
+    assert len(calls) == 2  # rewrite + generation
+    assert result.grounded is True
+
+
+def test_no_history_skips_rewrite(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        "src.rag_pipeline._PROVIDERS",
+        {"ollama": lambda s, u: calls.append(s) or "ok\nUSED_PASSAGES: 1"},
+    )
+
+    result = answer_question(store, "deductible", provider="ollama")
+
+    assert len(calls) == 1
+    assert result.search_query == "deductible"
+
+
+def test_rewrite_failure_falls_back_to_original_question(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+
+    def flaky(system, user):
+        if system.startswith("You rewrite"):
+            raise RuntimeError("boom")
+        return "ok\nUSED_PASSAGES: 1"
+
+    monkeypatch.setattr("src.rag_pipeline._PROVIDERS", {"ollama": flaky})
+
+    result = answer_question(
+        store, "deductible?", provider="ollama", history=[("a", "b")]
+    )
+
+    assert result.search_query == "deductible?"
