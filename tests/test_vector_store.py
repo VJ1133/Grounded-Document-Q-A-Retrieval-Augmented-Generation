@@ -107,3 +107,37 @@ def test_default_document_type_when_not_specified(tmp_path):
     matches = store.query("no type given", top_k=1)
 
     assert matches[0]["document_type"] == "General"
+
+
+def test_hybrid_retrieval_surfaces_exact_term_diluted_by_similar_chunks(tmp_path):
+    """Regression test for the real bug this fixed: a dense list of many
+    near-duplicate state notes (differing mainly by state name) buries the
+    one containing the actual answer under pure semantic search, because
+    the chunk's overall embedding is dominated by the shared boilerplate
+    rather than the one distinguishing term. BM25 keyword matching on the
+    exact term (via Reciprocal Rank Fusion) should still surface it.
+    """
+    store = _make_store(tmp_path)
+
+    # Many near-duplicate chunks sharing the same boilerplate structure and
+    # vocabulary, differing only by state name -- mirrors the real
+    # multi-state PIP notes list that diluted semantic search.
+    filler_states = [
+        "Alabama", "Georgia", "Idaho", "Kansas", "Maine", "Nevada",
+        "Ohio", "Oregon", "Tennessee", "Vermont", "Wyoming", "Montana",
+    ]
+    chunks = [
+        _chunk(f"{state} has no special minimum requirement for PIP coverage.", index=i)
+        for i, state in enumerate(filler_states)
+    ]
+    chunks.append(
+        _chunk(
+            "Utah has a special minimum requirement: there is a $3,000 minimum for PIP.",
+            index=len(filler_states),
+        )
+    )
+    store.add_document("state_notes.pdf", chunks)
+
+    matches = store.query("what is the minimum PIP for Utah?", top_k=3)
+
+    assert any("Utah" in m["text"] and "3,000" in m["text"] for m in matches)
