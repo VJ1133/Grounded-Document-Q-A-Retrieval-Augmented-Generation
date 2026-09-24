@@ -285,23 +285,54 @@ for q, result in st.session_state.history:
     st.markdown(f'<div class="{card_class}">{result.answer}</div>', unsafe_allow_html=True)
 
     if result.sources:
-        chips = "".join(
-            f'<span class="source-chip">📄 {s["document_name"]} · p.{s["display_page"]}</span>'
-            for s in result.sources
-        )
-        st.markdown(f"<div style='margin-top:10px'>{chips}</div>", unsafe_allow_html=True)
+        cited_sources = [s for s in result.sources if s.get("cited")]
+        other_sources = [s for s in result.sources if not s.get("cited")]
+
+        def _chip(s, cited: bool) -> str:
+            cls = "source-chip source-chip--cited" if cited else "source-chip"
+            mark = "★ " if cited else ""
+            return f'<span class="{cls}">{mark}📄 {s["document_name"]} · p.{s["display_page"]}</span>'
+
+        if cited_sources:
+            st.markdown(
+                "<div style='margin-top:10px; font-size:0.8rem; opacity:0.75'>"
+                "★ Passages the answer actually cites:</div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "".join(_chip(s, True) for s in cited_sources), unsafe_allow_html=True
+            )
+            if other_sources:
+                st.markdown(
+                    "<div style='margin-top:8px; font-size:0.8rem; opacity:0.6'>"
+                    "Also retrieved, not used in this answer:</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    "".join(_chip(s, False) for s in other_sources), unsafe_allow_html=True
+                )
+        else:
+            # The model didn't return a parseable USED_PASSAGES trailer --
+            # fall back to showing every retrieved passage with equal
+            # weight, same as before this feature existed.
+            st.markdown(
+                f"<div style='margin-top:10px'>{''.join(_chip(s, False) for s in result.sources)}</div>",
+                unsafe_allow_html=True,
+            )
 
         with st.expander("View retrieved evidence"):
-            for i, s in enumerate(result.sources, start=1):
+            ordered_sources = cited_sources + other_sources if cited_sources else result.sources
+            for s in ordered_sources:
                 page_note = f"page {s['display_page']}"
                 if s["printed_page_number"] and s["printed_page_number"] != s["page_number"]:
                     page_note += f" (file position: page {s['page_number']})"
                 if s.get("section"):
                     page_note += f" · {s['section']}"
                 score_note = f" (distance: {s['distance']:.3f})" if show_scores else ""
+                cited_tag = " · ★ USED IN ANSWER" if s.get("cited") else ""
                 st.markdown(
-                    f"**Passage {i} — {s['document_name']} ({s['document_type']}), "
-                    f"{page_note}**{score_note}"
+                    f"**{s['document_name']} ({s['document_type']}), "
+                    f"{page_note}**{score_note}{cited_tag}"
                 )
                 st.caption(s["text"])
     st.markdown("<hr style='border-color: rgba(201,162,75,0.12)'>", unsafe_allow_html=True)

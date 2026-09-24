@@ -212,6 +212,15 @@ section.main > div.block-container {
   padding: 4px 11px;
   border-radius: 999px;
   margin: 3px 6px 3px 0;
+  opacity: 0.7;
+}
+
+.source-chip--cited {
+  opacity: 1;
+  color: #14100a;
+  background: linear-gradient(160deg, var(--gold-bright), var(--gold));
+  border-color: var(--gold);
+  box-shadow: 0 4px 14px -4px rgba(201,162,75,0.5);
 }
 
 /* ---- status pill ---- */
