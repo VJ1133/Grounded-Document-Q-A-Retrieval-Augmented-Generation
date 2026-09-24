@@ -103,6 +103,72 @@ def _format_table(rows: list[list[str | None]]) -> str:
     return "\n".join(lines)
 
 
+def _row_key(line: str) -> tuple[str, ...] | None:
+    """Token signature of a data-like line (ignoring table pipes), or None
+    for prose/headings that should never be deduplicated."""
+    tokens = [t for t in line.split() if t != "|"]
+    if len(tokens) < 3 or not any(ch.isdigit() for t in tokens for ch in t):
+        return None
+    return tuple(tokens)
+
+
+_NUMERIC_CELL = re.compile(r"^[\d,.$%()\-]*\d[\d,.$%()\-]*$")
+
+
+def _collapse_vertical_rows(text: str) -> str:
+    """Joins rows that were extracted one cell per line back into one line.
+
+    Where PyMuPDF misses a table, a row comes out as a label line followed by
+    each numeric cell on its own line ("Arkansas", "652,352", "495,973", ...).
+    That loses the column alignment a model needs, so rejoin them in the same
+    " | " format as detected tables.
+    """
+    lines = text.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        label = lines[i].strip()
+        j = i + 1
+        cells = []
+        while j < len(lines) and _NUMERIC_CELL.match(lines[j].strip()):
+            cells.append(lines[j].strip())
+            j += 1
+        if label and "|" not in label and not _NUMERIC_CELL.match(label) and len(cells) >= 2:
+            out.append(" | ".join([label, *cells]))
+            i = j
+        else:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out)
+
+
+def _dedupe_table_rows(text: str) -> str:
+    """Drops loose-text lines that repeat a formatted table row.
+
+    On some pages PyMuPDF's table bbox covers a row only partly, so the same
+    row is emitted twice: once formatted ("Alabama | 1 | 2") and once as
+    loose words ("Alabama 1 2"). The copy wastes chunk space and confuses
+    small models, so keep only the formatted (pipe) version.
+    """
+    table_row_keys = {
+        key
+        for line in text.splitlines()
+        if "|" in line and (key := _row_key(line)) is not None
+    }
+    kept = []
+    seen: set[tuple[str, ...]] = set()
+    for line in text.splitlines():
+        key = _row_key(line)
+        if key is not None and key in table_row_keys:
+            # a loose copy always has a formatted twin somewhere: drop it,
+            # and keep only the first copy of the formatted row itself
+            if "|" not in line or key in seen:
+                continue
+            seen.add(key)
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _rects_overlap_ratio(a: fitz.Rect, b: fitz.Rect) -> float:
     inter = a & b
     if inter.is_empty or a.get_area() == 0:
@@ -149,7 +215,8 @@ def _extract_page_text(page: fitz.Page) -> str:
     left = sorted((i for i in items if i[0] < page_width / 2), key=lambda i: i[1])
     right = sorted((i for i in items if i[0] >= page_width / 2), key=lambda i: i[1])
 
-    return "\n".join(text for _x0, _y0, text in left + right)
+    joined = "\n".join(text for _x0, _y0, text in left + right)
+    return _dedupe_table_rows(_collapse_vertical_rows(joined))
 
 
 @dataclass

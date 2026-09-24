@@ -102,3 +102,38 @@ def test_load_pdf_bytes_keeps_two_column_sections_from_interleaving():
     assert text.index("A-ROW-2") < text.index("SECTION-B-HEADER")
     assert text.index("SECTION-A-HEADER") < text.index("A-ROW-1") < text.index("A-ROW-2")
     assert text.index("SECTION-B-HEADER") < text.index("B-ROW-1") < text.index("B-ROW-2")
+
+
+def test_dedupe_table_rows_drops_loose_copy_of_formatted_row():
+    from src.document_loader import _dedupe_table_rows
+
+    text = (
+        "Table 18A Earned Premiums\n"
+        "Alabama | 63,650,309 | 65,223,793\n"
+        "Alabama 63,650,309 65,223,793\n"
+        "Alaska 18,178,657 18,470,096"
+    )
+    result = _dedupe_table_rows(text)
+
+    assert result.splitlines() == [
+        "Table 18A Earned Premiums",
+        "Alabama | 63,650,309 | 65,223,793",
+        "Alaska 18,178,657 18,470,096",
+    ]
+
+
+def test_dedupe_table_rows_leaves_prose_alone():
+    from src.document_loader import _dedupe_table_rows
+
+    text = "The deductible is 500 dollars.\nThe deductible is 500 dollars."
+    assert _dedupe_table_rows(text) == text
+
+
+def test_collapse_vertical_rows_rejoins_one_cell_per_line():
+    from src.document_loader import _collapse_vertical_rows
+
+    text = "Arkansas\n652,352\n495,973\n91\nProse line here"
+    assert _collapse_vertical_rows(text).splitlines() == [
+        "Arkansas | 652,352 | 495,973 | 91",
+        "Prose line here",
+    ]
