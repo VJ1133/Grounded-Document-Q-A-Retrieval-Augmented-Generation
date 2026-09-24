@@ -13,6 +13,7 @@ run locally regardless of which generation provider is selected.
 """
 
 import os
+import re
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -32,6 +33,11 @@ INSUFFICIENT_CONTEXT_MESSAGE = (
     "The uploaded document(s) do not contain enough information to answer this question."
 )
 
+# Matches the structured trailer line the model is asked to append (see
+# SYSTEM_PROMPT) -- e.g. "USED_PASSAGES: 1,3" -- so it can be parsed out and
+# never shown to the user as raw text.
+_USED_PASSAGES_RE = re.compile(r"(?im)^\s*USED_PASSAGES:\s*(.*?)\s*$")
+
 SYSTEM_PROMPT = (
     "You are an insurance document assistant. Answer the user's question "
     "using ONLY the context passages provided below. "
@@ -39,7 +45,13 @@ SYSTEM_PROMPT = (
     f'"{INSUFFICIENT_CONTEXT_MESSAGE}" '
     "Do not use outside knowledge. Do not guess. Keep answers concise and factual. "
     "Do not include passage numbers or citation markers in your answer text -- "
-    "sources are shown separately to the user, so just answer in plain prose."
+    "sources are shown separately to the user, so just answer in plain prose.\n\n"
+    "After your answer, on its own new line, output exactly one line in this "
+    "exact format (this line is parsed by software, not shown to the user "
+    "as-is, so it must match this format precisely and nothing else should "
+    "follow it):\n"
+    "USED_PASSAGES: <comma-separated passage numbers you actually relied on>\n"
+    "If you gave the insufficient-context refusal, output USED_PASSAGES: none"
 )
 
 
@@ -53,6 +65,27 @@ class RagAnswer:
     # the "nothing to search" cases use different wording than the model's
     # own refusal message.
     grounded: bool = True
+
+
+def _extract_used_passages(answer_text: str) -> tuple[str, set[int]]:
+    """Strips the USED_PASSAGES trailer from the model's raw response and
+    returns (clean_answer_text, {1-indexed passage numbers cited}).
+
+    Returns an empty set (not an error) if the trailer is missing or
+    unparseable -- some models occasionally drop instructed formatting, and
+    "no highlighted sources" is a safe degradation, not a crash.
+    """
+    match = _USED_PASSAGES_RE.search(answer_text)
+    if not match:
+        return answer_text.strip(), set()
+
+    clean_text = (answer_text[: match.start()] + answer_text[match.end() :]).strip()
+    numbers = set()
+    for token in match.group(1).split(","):
+        token = token.strip()
+        if token.isdigit():
+            numbers.add(int(token))
+    return clean_text, numbers
 
 
 def _build_context(matches: list[dict]) -> str:
@@ -138,7 +171,15 @@ def answer_question(
         "Answer using only the context above."
     )
 
-    answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
+    raw_answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
+    answer_text, cited_passage_numbers = _extract_used_passages(raw_answer_text)
     grounded = INSUFFICIENT_CONTEXT_MESSAGE.lower() not in answer_text.lower()
+
+    # Passage numbers in the prompt/response are 1-indexed and match the
+    # order of `matches` -- mark each source so the UI can highlight
+    # specifically which passage(s) the model says it actually used,
+    # instead of leaving every retrieved passage looking equally relevant.
+    for i, m in enumerate(matches, start=1):
+        m["cited"] = i in cited_passage_numbers
 
     return RagAnswer(answer=answer_text, sources=matches, grounded=grounded)

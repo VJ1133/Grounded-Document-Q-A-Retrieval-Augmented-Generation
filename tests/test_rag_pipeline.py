@@ -1,7 +1,11 @@
 import pytest
 
 from src.chunker import Chunk
-from src.rag_pipeline import INSUFFICIENT_CONTEXT_MESSAGE, answer_question
+from src.rag_pipeline import (
+    INSUFFICIENT_CONTEXT_MESSAGE,
+    _extract_used_passages,
+    answer_question,
+)
 from src.vector_store import VectorStore
 
 
@@ -65,3 +69,37 @@ def test_answer_question_rejects_unknown_provider(tmp_path):
 
     with pytest.raises(ValueError):
         answer_question(store, "deductible", provider="not-a-real-provider")
+
+
+def test_extract_used_passages_strips_trailer_and_parses_numbers():
+    raw = "The deductible is $500.\nUSED_PASSAGES: 1,3"
+    text, numbers = _extract_used_passages(raw)
+    assert text == "The deductible is $500."
+    assert numbers == {1, 3}
+
+
+def test_extract_used_passages_handles_none():
+    raw = "Insufficient info.\nUSED_PASSAGES: none"
+    text, numbers = _extract_used_passages(raw)
+    assert text == "Insufficient info."
+    assert numbers == set()
+
+
+def test_extract_used_passages_degrades_gracefully_without_trailer():
+    raw = "The deductible is $500."
+    text, numbers = _extract_used_passages(raw)
+    assert text == "The deductible is $500."
+    assert numbers == set()
+
+
+def test_answer_question_marks_cited_sources(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    monkeypatch.setattr(
+        "src.rag_pipeline._PROVIDERS",
+        {"ollama": lambda system, user: "The deductible is $500.\nUSED_PASSAGES: 1"},
+    )
+
+    result = answer_question(store, "deductible", provider="ollama")
+
+    assert "USED_PASSAGES" not in result.answer
+    assert result.sources[0]["cited"] is True
