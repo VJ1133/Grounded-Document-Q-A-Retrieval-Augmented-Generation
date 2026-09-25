@@ -143,6 +143,37 @@ def _rewrite_followup(
     return rewritten or question
 
 
+_PASSAGE_LIST = r"Passages?\s*\d+(?:\s*(?:,\s*(?:and\s*)?|and\s*|&\s*)\d+)*"
+# "(Passage 3)", "[Passages 1, 2 and 6]", "(see Passage 4)"
+_PASSAGE_PAREN_RE = re.compile(
+    rf"\s*[\(\[]\s*(?:see\s+)?{_PASSAGE_LIST}\s*[\)\]]", re.IGNORECASE
+)
+# "According to Passage 7, the ..." -- also consumes the next character so
+# it can be re-capitalised when the lead-in opened a sentence.
+_PASSAGE_LEADIN_RE = re.compile(
+    rf"\b(?:according to|based on|per|from)\s+{_PASSAGE_LIST}\s*,?\s*(\S)", re.IGNORECASE
+)
+
+
+def _strip_passage_references(text: str) -> str:
+    """Removes "(Passage N)"-style citation markers from the answer text.
+
+    The prompt forbids them (sources are shown separately in the UI), but
+    models -- small ones especially -- still emit them sometimes, so this
+    enforces the rule in code. Only parenthetical markers and "According to
+    Passage N," lead-ins are removed; a bare mention mid-sentence is left
+    alone rather than risk mangling the sentence.
+    """
+
+    def _drop_leadin(m: re.Match) -> str:
+        before = m.string[: m.start()].rstrip(" ")
+        at_sentence_start = not before or before.endswith((".", "!", "?", "\n"))
+        return m.group(1).upper() if at_sentence_start else m.group(1)
+
+    text = _PASSAGE_PAREN_RE.sub("", text)
+    return _PASSAGE_LEADIN_RE.sub(_drop_leadin, text).strip()
+
+
 def _build_context(matches: list[dict]) -> str:
     blocks = []
     for i, m in enumerate(matches, start=1):
@@ -234,6 +265,7 @@ def answer_question(
 
     raw_answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
     answer_text, cited_passage_numbers = _extract_used_passages(raw_answer_text)
+    answer_text = _strip_passage_references(answer_text)
     grounded = INSUFFICIENT_CONTEXT_MESSAGE.lower() not in answer_text.lower()
 
     # Passage numbers in the prompt/response are 1-indexed and match the
