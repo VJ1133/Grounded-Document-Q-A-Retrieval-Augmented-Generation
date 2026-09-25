@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
+from src.reranker import rerank
 from src.vector_store import VectorStore
 
 load_dotenv()  # reads GROQ_API_KEY etc. from a local .env file, if present
@@ -174,6 +175,40 @@ def _strip_passage_references(text: str) -> str:
     return _PASSAGE_LEADIN_RE.sub(_drop_leadin, text).strip()
 
 
+# First-stage candidates handed to the cross-encoder reranker, which then
+# keeps the best top_k.
+RERANK_CANDIDATES = 30
+
+
+def retrieve(
+    vector_store: VectorStore,
+    query: str,
+    top_k: int = 8,
+    document_types: list[str] | None = None,
+    document_names: list[str] | None = None,
+    use_reranker: bool = True,
+) -> list[dict]:
+    """Hybrid retrieval, then (by default) cross-encoder reranking.
+
+    If the reranker can't load (e.g. its model can't be downloaded offline)
+    this degrades to plain hybrid retrieval rather than failing the question.
+    """
+    if not use_reranker:
+        return vector_store.query(
+            query, top_k=top_k, document_types=document_types, document_names=document_names
+        )
+    candidates = vector_store.query(
+        query,
+        top_k=max(top_k, RERANK_CANDIDATES),
+        document_types=document_types,
+        document_names=document_names,
+    )
+    try:
+        return rerank(query, candidates, top_k)
+    except Exception:
+        return candidates[:top_k]
+
+
 def _build_context(matches: list[dict]) -> str:
     blocks = []
     for i, m in enumerate(matches, start=1):
@@ -233,6 +268,7 @@ def answer_question(
     document_types: list[str] | None = None,
     document_names: list[str] | None = None,
     history: list[tuple[str, str]] | None = None,
+    use_reranker: bool = True,
 ) -> RagAnswer:
     """`history` is prior (question, answer) turns, oldest first. When given,
     the question is first rewritten into a standalone query so retrieval
@@ -242,8 +278,13 @@ def answer_question(
 
     search_query = _rewrite_followup(provider, question, history) if history else question
 
-    matches = vector_store.query(
-        search_query, top_k=top_k, document_types=document_types, document_names=document_names
+    matches = retrieve(
+        vector_store,
+        search_query,
+        top_k=top_k,
+        document_types=document_types,
+        document_names=document_names,
+        use_reranker=use_reranker,
     )
 
     if not matches:
