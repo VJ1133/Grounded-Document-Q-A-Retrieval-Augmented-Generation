@@ -1,0 +1,63 @@
+{
+  "_comment": "Ground truth for auto_insurance_report.pdf (NAIC 2022/2023 Auto Insurance Database Report). expected_pages are PHYSICAL pdf page numbers. expected_values must all appear in the answer (commas/$ ignored); forbidden_values must not (e.g. the neighbouring Earned Exposures column). answerable=false means the correct behaviour is a refusal. history is prior [question, answer] turns for follow-up cases.",
+  "document": "auto_insurance_report.pdf",
+  "cases": [
+    {
+      "id": "medpay-al-voluntary-premium",
+      "question": "What is the earned premium for Medical Payments voluntary business in Alabama for 2020-2022?",
+      "answerable": true,
+      "expected_pages": [108],
+      "expected_values": ["63,650,309", "65,223,793", "67,854,883"],
+      "forbidden_values": ["2,769,093", "2,733,722", "2,679,313"]
+    },
+    {
+      "id": "medpay-al-premium-unspecified-type",
+      "question": "What is the earned premium for Medical Payments 2020-2022 for Alabama?",
+      "answerable": true,
+      "expected_pages": [108, 116],
+      "expected_values": ["63,650,309", "65,223,793"],
+      "forbidden_values": ["2,769,093", "2,733,722", "2,679,313"]
+    },
+    {
+      "id": "medpay-ak-voluntary-premium",
+      "question": "What was the Medical Payments voluntary earned premium in Alaska in 2022?",
+      "answerable": true,
+      "expected_pages": [108],
+      "expected_values": ["18,178,657"],
+      "forbidden_values": ["318,025"]
+    },
+    {
+      "id": "pip-utah-minimum",
+      "question": "What is the minimum PIP for Utah?",
+      "answerable": true,
+      "expected_pages": [93],
+      "expected_values": ["3,000"],
+      "forbidden_values": []
+    },
+    {
+      "id": "pip-washington-followup",
+      "question": "What about Washington?",
+      "history": [["What is the minimum PIP for Utah?", "Utah has a $3,000 minimum for PIP."]],
+      "answerable": true,
+      "expected_pages": [93],
+      "expected_values": ["reject"],
+      "forbidden_values": ["3,000"]
+    },
+    {
+      "id": "out-of-scope-capital",
+      "question": "What is the capital of France?",
+      "answerable": false,
+      "expected_pages": [],
+      "expected_values": [],
+      "forbidden_values": []
+    },
+    {
+      "id": "out-of-scope-stock",
+      "question": "What was the stock price of Apple in 2020?",
+      "answerable": false,
+      "expected_pages": [],
+      "expected_values": [],
+      "forbidden_values": []
+    }
+  ]
+}
