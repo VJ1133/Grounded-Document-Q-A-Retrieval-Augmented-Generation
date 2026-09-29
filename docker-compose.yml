@@ -12,8 +12,11 @@
 # either front end is immediately visible to the other.
 
 services:
+  # Both services run the same image (built once, from api's `build:` --
+  # app has none, so Compose reuses it instead of building a second,
+  # identical image under a different tag). Only the command differs.
   app:
-    build: .
+    image: ragproject:latest
     command: streamlit run app/app.py --server.address=0.0.0.0 --server.port=8501
     ports:
       - "8501:8501"
@@ -24,6 +27,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: ragproject:latest
     build: .
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
     ports:

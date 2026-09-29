@@ -17,7 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# sentence-transformers pulls in torch; plain `pip install` resolves the
+# default CUDA build (pulls in gigabytes of nvidia-*/triton wheels) even
+# though this image only ever runs CPU inference. Install the CPU-only
+# wheel first so that requirement is already satisfied by the time the
+# rest of requirements.txt is installed.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
 COPY app/ app/
