@@ -15,6 +15,22 @@ RAG pipeline up to an evaluated, production-style service.
 > per-question logging, a FastAPI service, and a Docker deployment are all
 > in place.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Hero panel and question box](docs/screenshots/hero-and-question.jpg) | ![Grounded answer with cited-source highlighting](docs/screenshots/grounded-answer-citations.jpg) |
+| Sidebar shows live system status, indexed documents, and the answer engine toggle. | A real question against the NAIC auto insurance report — grounded, with the passage the answer actually cites highlighted separately from passages retrieved-but-unused. |
+
+![Retrieved evidence panel showing the exact cited passage text](docs/screenshots/retrieved-evidence.jpg)
+The evidence panel shows the actual retrieved passage text, with the cited one marked "★ USED IN ANSWER" — nothing here is trimmed or reformatted for the screenshot.
+
+## Results
+
+- **Reranking raised retrieval MRR from 0.25 to 0.90** on the evaluation set (`eval/cases.json`, scored by `scripts/run_eval.py`) — the correct page moved from an average rank of ~4 up to ~1.1.
+- **7/7 answer accuracy** on the evaluation set with Groq as the generation provider (expected values present, forbidden values absent, out-of-scope questions correctly refused).
+- **A real bug, caught and fixed with a regression test:** the pipeline initially answered "Earned Premium" questions with the adjacent "Earned Exposure" column from a flattened multi-column table. Fixed with an explicit prompt rule about column-group order plus a code-level check (`src/evaluation.py::unsupported_numbers`) that flags any answer number absent from the retrieved passages — see `CHANGELOG.md` for the full writeup.
+
 ## Why this project exists
 
 Most portfolio chatbots are thin wrappers around a hosted LLM API. This
