@@ -190,3 +190,39 @@ def test_answer_question_strips_passage_markers(tmp_path, monkeypatch):
 
     assert result.answer == "The deductible is $500."
     assert result.sources[0]["cited"] is True
+
+
+def test_answer_question_writes_a_query_log_entry(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    log_path = tmp_path / "queries.jsonl"
+    monkeypatch.setattr("src.query_log.LOG_PATH", log_path)
+    monkeypatch.setattr(
+        "src.rag_pipeline._PROVIDERS",
+        {"ollama": lambda s, u: "The deductible is $500.\nUSED_PASSAGES: 1"},
+    )
+
+    answer_question(store, "deductible", provider="ollama", use_reranker=False)
+
+    import json
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["question"] == "deductible"
+    assert entry["grounded"] is True
+    assert entry["num_sources"] == 1
+    assert entry["cited_pages"] == [1]
+    assert entry["total_ms"] is not None
+    assert entry["error"] is None
+
+
+def test_answer_question_logs_errors_and_reraises(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    log_path = tmp_path / "queries.jsonl"
+    monkeypatch.setattr("src.query_log.LOG_PATH", log_path)
+
+    with pytest.raises(ValueError):
+        answer_question(store, "deductible", provider="not-a-real-provider")
+
+    import json
+
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert "not-a-real-provider" in entry["error"] or "Unknown provider" in entry["error"]

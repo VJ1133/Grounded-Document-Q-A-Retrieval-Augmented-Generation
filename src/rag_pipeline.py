@@ -14,10 +14,12 @@ run locally regardless of which generation provider is selected.
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
+from src.query_log import QueryLogEntry, write_entry
 from src.reranker import rerank
 from src.vector_store import VectorStore
 
@@ -272,50 +274,89 @@ def answer_question(
 ) -> RagAnswer:
     """`history` is prior (question, answer) turns, oldest first. When given,
     the question is first rewritten into a standalone query so retrieval
-    works for follow-ups like "what about for Texas?"."""
-    if provider not in _PROVIDERS:
-        raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
+    works for follow-ups like "what about for Texas?".
 
-    search_query = _rewrite_followup(provider, question, history) if history else question
-
-    matches = retrieve(
-        vector_store,
-        search_query,
+    Every call is recorded to the query log (src/query_log.py) -- timings,
+    what was retrieved, and whether the answer was grounded -- regardless of
+    how it exits, so a raised error is still logged before it propagates."""
+    log = QueryLogEntry(
+        question=question,
+        provider=provider,
         top_k=top_k,
         document_types=document_types,
         document_names=document_names,
         use_reranker=use_reranker,
     )
+    total_start = time.perf_counter()
+    try:
+        if provider not in _PROVIDERS:
+            raise ValueError(f"Unknown provider '{provider}'. Choose from: {list(_PROVIDERS)}")
 
-    if not matches:
-        if (document_types or document_names) and vector_store.count() > 0:
-            message = (
-                "No documents match the current filter, so there is nothing to search. "
-                "Clear or adjust the document filter and try again."
-            )
+        if history:
+            rewrite_start = time.perf_counter()
+            search_query = _rewrite_followup(provider, question, history)
+            log.rewrite_ms = round((time.perf_counter() - rewrite_start) * 1000, 1)
         else:
-            message = "No documents have been uploaded yet, so there is nothing to search."
-        return RagAnswer(answer=message, search_query=search_query, sources=[], grounded=False)
+            search_query = question
+        log.search_query = search_query
+        log.rewritten = search_query != question
 
-    context = _build_context(matches)
-    user_prompt = (
-        f"Context passages:\n\n{context}\n\n"
-        f"Question: {question}\n\n"
-        "Answer using only the context above."
-    )
+        retrieve_start = time.perf_counter()
+        matches = retrieve(
+            vector_store,
+            search_query,
+            top_k=top_k,
+            document_types=document_types,
+            document_names=document_names,
+            use_reranker=use_reranker,
+        )
+        log.retrieve_ms = round((time.perf_counter() - retrieve_start) * 1000, 1)
+        log.num_sources = len(matches)
+        log.retrieved_pages = [m["page_number"] for m in matches]
 
-    raw_answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
-    answer_text, cited_passage_numbers = _extract_used_passages(raw_answer_text)
-    answer_text = _strip_passage_references(answer_text)
-    grounded = INSUFFICIENT_CONTEXT_MESSAGE.lower() not in answer_text.lower()
+        if not matches:
+            if (document_types or document_names) and vector_store.count() > 0:
+                message = (
+                    "No documents match the current filter, so there is nothing to search. "
+                    "Clear or adjust the document filter and try again."
+                )
+            else:
+                message = "No documents have been uploaded yet, so there is nothing to search."
+            log.grounded = False
+            return RagAnswer(
+                answer=message, search_query=search_query, sources=[], grounded=False
+            )
 
-    # Passage numbers in the prompt/response are 1-indexed and match the
-    # order of `matches` -- mark each source so the UI can highlight
-    # specifically which passage(s) the model says it actually used,
-    # instead of leaving every retrieved passage looking equally relevant.
-    for i, m in enumerate(matches, start=1):
-        m["cited"] = i in cited_passage_numbers
+        context = _build_context(matches)
+        user_prompt = (
+            f"Context passages:\n\n{context}\n\n"
+            f"Question: {question}\n\n"
+            "Answer using only the context above."
+        )
 
-    return RagAnswer(
-        answer=answer_text, search_query=search_query, sources=matches, grounded=grounded
-    )
+        generate_start = time.perf_counter()
+        raw_answer_text = _PROVIDERS[provider](SYSTEM_PROMPT, user_prompt)
+        log.generate_ms = round((time.perf_counter() - generate_start) * 1000, 1)
+        answer_text, cited_passage_numbers = _extract_used_passages(raw_answer_text)
+        answer_text = _strip_passage_references(answer_text)
+        grounded = INSUFFICIENT_CONTEXT_MESSAGE.lower() not in answer_text.lower()
+
+        # Passage numbers in the prompt/response are 1-indexed and match the
+        # order of `matches` -- mark each source so the UI can highlight
+        # specifically which passage(s) the model says it actually used,
+        # instead of leaving every retrieved passage looking equally relevant.
+        for i, m in enumerate(matches, start=1):
+            m["cited"] = i in cited_passage_numbers
+
+        log.grounded = grounded
+        log.cited_pages = [m["page_number"] for m in matches if m.get("cited")]
+
+        return RagAnswer(
+            answer=answer_text, search_query=search_query, sources=matches, grounded=grounded
+        )
+    except Exception as exc:
+        log.error = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        log.total_ms = round((time.perf_counter() - total_start) * 1000, 1)
+        write_entry(log)

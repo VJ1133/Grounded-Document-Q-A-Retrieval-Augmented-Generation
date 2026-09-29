@@ -148,3 +148,19 @@ many documents are in it. The actual V2 work was in the parts V1 never
 needed: giving each chunk enough metadata to *filter* on, and giving the UI
 a way to manage a growing collection instead of only "upload one, clear
 all."
+
+## V5 -- Reranking, evaluation harness, query logging
+
+- `src/reranker.py`: hybrid retrieval now pulls the top 30 candidates and
+  reranks them with a cross-encoder (`ms-marco-MiniLM-L-6-v2`) before
+  keeping the top_k; falls back to plain hybrid retrieval if the model
+  can't load. Raised retrieval MRR on the eval set from 0.25 to 0.90.
+- `eval/cases.json` + `scripts/run_eval.py`: a ground-truth case set scored
+  for retrieval rank (hit@k, MRR), answer correctness (expected/forbidden
+  values, or refusal for out-of-scope questions), and faithfulness (every
+  number in the answer must appear in the retrieved passages -- catches
+  what `grounded` alone can't, an unfaithful but non-refusing answer).
+- `src/query_log.py`: every `answer_question()` call is now recorded to
+  `data/logs/queries.jsonl` (JSONL, one entry per question) -- the
+  rewritten query, retrieved/cited pages, provider, per-stage timings, and
+  any error -- regardless of how the call exits.

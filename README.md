@@ -8,10 +8,11 @@ This project is being built version by version (V1 → V5) so that each stage
 demonstrates a distinct AI engineering concept, from a minimal single-document
 RAG pipeline up to an evaluated, production-style service.
 
-> **Status: V4 — Conversational RAG.** Follow-up questions ("what about for
-> Texas?") are rewritten into standalone queries using recent chat turns
-> before retrieval, with a "New conversation" reset. Reranking, an
-> evaluation dashboard, and the API/Docker packaging arrive in V5.
+> **Status: V5 in progress.** Hybrid retrieval and cross-encoder
+> reranking are live, with an evaluation harness (`eval/cases.json`,
+> `scripts/run_eval.py`) scoring retrieval rank, answer correctness and
+> faithfulness, plus structured per-question logging. FastAPI and Docker
+> packaging are still to come.
 
 ## Why this project exists
 
