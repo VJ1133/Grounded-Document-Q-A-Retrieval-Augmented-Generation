@@ -10,9 +10,9 @@ RAG pipeline up to an evaluated, production-style service.
 
 > **Status: V5 in progress.** Hybrid retrieval and cross-encoder
 > reranking are live, with an evaluation harness (`eval/cases.json`,
-> `scripts/run_eval.py`) scoring retrieval rank, answer correctness and
-> faithfulness, plus structured per-question logging. FastAPI and Docker
-> packaging are still to come.
+> `scripts/run_eval.py`), structured per-question logging, and a FastAPI
+> service (`api/main.py`) alongside the Streamlit app. Docker packaging is
+> still to come.
 
 ## Why this project exists
 
@@ -72,6 +72,20 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 | PyMuPDF | PDF text extraction, with column/table-aware reading order |
 | FastAPI | Added in V5 for API serving |
 | Docker | Added in V5 for packaging |
+
+## API
+
+A FastAPI service wraps the same pipeline the Streamlit app uses (same
+on-disk vector store, so documents ingested via either one are visible to
+both):
+
+```bash
+uvicorn api.main:app --reload --port 8000
+```
+
+Interactive docs at `http://localhost:8000/docs`. Endpoints: `GET /health`,
+`GET /documents`, `POST /documents` (multipart PDF upload), `DELETE
+/documents/{name}`, `POST /ask`.
 
 ## Roadmap
 

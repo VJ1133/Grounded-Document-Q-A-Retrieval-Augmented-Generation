@@ -164,3 +164,16 @@ all."
   `data/logs/queries.jsonl` (JSONL, one entry per question) -- the
   rewritten query, retrieved/cited pages, provider, per-stage timings, and
   any error -- regardless of how the call exits.
+
+## V5 -- FastAPI service
+
+- `api/main.py` (+ `api/schemas.py`): a FastAPI service over the same
+  pipeline and on-disk vector store the Streamlit app uses -- `GET
+  /health`, `GET`/`POST`/`DELETE /documents`, `POST /ask` (question,
+  provider, filters, history, use_reranker). Interactive docs at `/docs`.
+- Errors map to proper status codes: duplicate ingest -> 409, unparseable
+  PDF -> 422, unknown document/provider -> 404/400, a config error like a
+  missing GROQ_API_KEY -> 502, anything unexpected -> 500 JSON (not an
+  HTML traceback page).
+- 10 new tests in `tests/test_api.py` using FastAPI's TestClient against an
+  isolated temp vector store.
