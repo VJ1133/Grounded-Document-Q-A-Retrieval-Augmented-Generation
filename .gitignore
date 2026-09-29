@@ -16,3 +16,9 @@ data/logs/
 build/
 dist/
 eval/results/
+
+# Word's temp lock file for an open .docx (recreated by Word, not ours to manage)
+~$*.doc*
+
+# Real NAIC report used for local testing/eval -- not sample data, not for the repo
+/auto_insurance_report.pdf
