@@ -1,0 +1,43 @@
+# Portfolio/public deployment: Groq-only (ALLOW_OLLAMA=false is baked into
+# the image itself, see Dockerfile -- not just set here). Provide
+# GROQ_API_KEY via the environment or a .env file next to this compose
+# file; it is never baked into the image (.dockerignore excludes .env).
+#
+#   docker compose up --build
+#
+# Streamlit UI:  http://localhost:8501
+# API + /docs:   http://localhost:8000/docs
+#
+# Both services share one Chroma volume, so a document uploaded through
+# either front end is immediately visible to the other.
+
+services:
+  app:
+    build: .
+    command: streamlit run app/app.py --server.address=0.0.0.0 --server.port=8501
+    ports:
+      - "8501:8501"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:?Set GROQ_API_KEY in the environment or a .env file}
+    volumes:
+      - chroma_data:/app/data/chroma_db
+    restart: unless-stopped
+
+  api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:?Set GROQ_API_KEY in the environment or a .env file}
+    volumes:
+      - chroma_data:/app/data/chroma_db
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  chroma_data:

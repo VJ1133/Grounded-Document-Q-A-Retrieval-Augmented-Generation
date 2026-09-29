@@ -52,7 +52,17 @@ def get_store() -> VectorStore:
     return _store
 
 
+# Off by default in the Docker image (see Dockerfile) -- a public
+# deployment has no local Ollama to reach, and skipping the check avoids a
+# pointless connection attempt/timeout on every /health call. Regular
+# (non-Docker) local use is unaffected: this only changes behaviour when the
+# env var is explicitly set.
+ALLOW_OLLAMA = os.environ.get("ALLOW_OLLAMA", "true").lower() != "false"
+
+
 def _ollama_reachable() -> bool:
+    if not ALLOW_OLLAMA:
+        return False
     try:
         import ollama
 
@@ -121,6 +131,10 @@ def ask(request: AskRequest) -> AskResponse:
     if request.provider not in ("ollama", "groq"):
         raise HTTPException(
             status_code=400, detail=f"Unknown provider '{request.provider}'."
+        )
+    if request.provider == "ollama" and not ALLOW_OLLAMA:
+        raise HTTPException(
+            status_code=400, detail="Ollama is disabled in this deployment; use provider=\"groq\"."
         )
 
     history = (

@@ -177,3 +177,20 @@ all."
   HTML traceback page).
 - 10 new tests in `tests/test_api.py` using FastAPI's TestClient against an
   isolated temp vector store.
+
+## V5 -- Docker (Groq-only)
+
+- `Dockerfile` + `docker-compose.yml`: one image, two services (Streamlit
+  app on 8501, FastAPI on 8000) sharing a named volume for the Chroma
+  store, so a document uploaded through either front end is visible to the
+  other. Embedding and reranker models are pre-downloaded at build time so
+  the running container needs no outbound network access besides the Groq
+  API call itself.
+- `ALLOW_OLLAMA=false` is baked into the image (not just set in compose),
+  so the option is compiled out for a public deployment rather than merely
+  hidden in the UI -- there's no local Ollama to reach from one anyway.
+  `app/app.py` and `api/main.py` both gate on it: the UI hides the
+  Ollama radio option and status pill entirely, and `POST /ask` returns
+  400 for `provider=ollama` instead of a confusing "unreachable" error.
+  Non-Docker local use is unaffected (defaults to enabled).
+- 2 new API tests cover the disabled-Ollama path.

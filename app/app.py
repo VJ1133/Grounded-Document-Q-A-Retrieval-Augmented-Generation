@@ -37,7 +37,17 @@ def get_vector_store() -> VectorStore:
     return VectorStore()
 
 
+# Off by default in the Docker image (see Dockerfile) -- a public deployment
+# has no local Ollama to reach, and skipping the check avoids a pointless
+# connection attempt/timeout against localhost on every page load. Regular
+# (non-Docker) local use is unaffected: this only changes behaviour when the
+# env var is explicitly set.
+ALLOW_OLLAMA = os.environ.get("ALLOW_OLLAMA", "true").lower() != "false"
+
+
 def ollama_is_reachable() -> bool:
+    if not ALLOW_OLLAMA:
+        return False
     try:
         import ollama
 
@@ -72,23 +82,29 @@ groq_ok = groq_key_present()
 # RAM. Fall back to local Ollama when no Groq key is configured (e.g. a
 # fresh clone before .env is set up), since that still works with zero setup.
 if st.session_state.provider is None:
-    st.session_state.provider = "groq" if groq_ok else "ollama"
+    st.session_state.provider = "groq" if (groq_ok or not ALLOW_OLLAMA) else "ollama"
 
 # The provider selector must run (and update session_state) before the hero
 # section below reads it, or a click on the radio would render one rerun
 # stale here even though the sidebar itself shows the new choice immediately.
 with st.sidebar:
     st.markdown('<div class="section-label">Answer Engine</div>', unsafe_allow_html=True)
-    provider_options = {"ollama": "Local (Ollama)", "groq": "Groq API (cloud, free)"}
-    selected_label = st.radio(
-        "Answer engine",
-        options=list(provider_options.values()),
-        index=list(provider_options.keys()).index(st.session_state.provider),
-        label_visibility="collapsed",
-    )
-    st.session_state.provider = next(
-        k for k, v in provider_options.items() if v == selected_label
-    )
+    provider_options = {"groq": "Groq API (cloud, free)"}
+    if ALLOW_OLLAMA:
+        provider_options["ollama"] = "Local (Ollama)"
+    if len(provider_options) > 1:
+        selected_label = st.radio(
+            "Answer engine",
+            options=list(provider_options.values()),
+            index=list(provider_options.keys()).index(st.session_state.provider),
+            label_visibility="collapsed",
+        )
+        st.session_state.provider = next(
+            k for k, v in provider_options.items() if v == selected_label
+        )
+    else:
+        st.session_state.provider = "groq"
+        st.caption("Answer engine: Groq API (cloud)")
     if st.session_state.provider == "ollama" and not ollama_ok:
         st.warning("Local Ollama isn't reachable right now.")
     if st.session_state.provider == "groq" and not groq_ok:
@@ -124,12 +140,13 @@ st.markdown(
 
 with st.sidebar:
     st.markdown('<div class="section-label">System Status</div>', unsafe_allow_html=True)
-    ollama_led = "led-green" if ollama_ok else "led-red"
-    ollama_label = "Ollama connected" if ollama_ok else "Ollama unreachable"
-    st.markdown(
-        f'<div class="status-pill"><span class="led {ollama_led}"></span>{ollama_label}</div>',
-        unsafe_allow_html=True,
-    )
+    if ALLOW_OLLAMA:
+        ollama_led = "led-green" if ollama_ok else "led-red"
+        ollama_label = "Ollama connected" if ollama_ok else "Ollama unreachable"
+        st.markdown(
+            f'<div class="status-pill"><span class="led {ollama_led}"></span>{ollama_label}</div>',
+            unsafe_allow_html=True,
+        )
     groq_led = "led-green" if groq_ok else "led-amber"
     groq_label = "Groq API key found" if groq_ok else "Groq API key not set"
     st.markdown(
@@ -140,7 +157,7 @@ with st.sidebar:
         '<div class="status-pill"><span class="led led-green"></span>Embedding model ready</div>',
         unsafe_allow_html=True,
     )
-    if not ollama_ok:
+    if ALLOW_OLLAMA and not ollama_ok:
         st.caption(f"Run `ollama serve` and `ollama pull {OLLAMA_MODEL}` first.")
     if not groq_ok:
         st.caption("Get a free key at console.groq.com and add it to a .env file.")

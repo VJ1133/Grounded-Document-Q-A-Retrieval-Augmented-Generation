@@ -8,11 +8,10 @@ This project is being built version by version (V1 → V5) so that each stage
 demonstrates a distinct AI engineering concept, from a minimal single-document
 RAG pipeline up to an evaluated, production-style service.
 
-> **Status: V5 in progress.** Hybrid retrieval and cross-encoder
-> reranking are live, with an evaluation harness (`eval/cases.json`,
-> `scripts/run_eval.py`), structured per-question logging, and a FastAPI
-> service (`api/main.py`) alongside the Streamlit app. Docker packaging is
-> still to come.
+> **Status: V5 complete.** Hybrid retrieval, cross-encoder reranking, an
+> evaluation harness (`eval/cases.json`, `scripts/run_eval.py`), structured
+> per-question logging, a FastAPI service, and a Docker deployment are all
+> in place.
 
 ## Why this project exists
 
@@ -72,6 +71,30 @@ answer-generation call goes to Groq, and only when that provider is chosen.
 | PyMuPDF | PDF text extraction, with column/table-aware reading order |
 | FastAPI | Added in V5 for API serving |
 | Docker | Added in V5 for packaging |
+
+## Docker
+
+Runs both front ends (Streamlit + the FastAPI service) against a shared,
+persistent vector store, and is **Groq-only**: `ALLOW_OLLAMA=false` is
+baked into the image itself (there is no local Ollama to reach from a
+public deployment, and this repo is meant to be safely shareable, so the
+option is compiled out rather than merely hidden in the UI).
+
+```bash
+cp .env.example .env        # paste your GROQ_API_KEY in
+docker compose up --build
+```
+
+- Streamlit UI: http://localhost:8501
+- API + interactive docs: http://localhost:8000/docs
+
+Your `.env` file is only ever read by Compose to set the container's
+environment; it is excluded by `.dockerignore` and is never baked into the
+image, so it is safe even for an image you might later push somewhere
+public. The embedding and reranker models are downloaded once at *build*
+time (baked into the image), not at container start, so a running
+container needs no outbound network access beyond the Groq API call
+itself.
 
 ## API
 

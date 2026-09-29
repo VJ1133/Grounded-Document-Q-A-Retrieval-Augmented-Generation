@@ -170,3 +170,28 @@ def test_ask_honours_history_for_followup(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["search_query"] == "What is the collision deductible?"
     assert len(calls) == 2
+
+
+def test_ask_rejects_ollama_when_disabled(client, monkeypatch):
+    c, _store = client
+    monkeypatch.setattr(main, "ALLOW_OLLAMA", False)
+
+    response = c.post("/ask", json={"question": "x", "provider": "ollama"})
+
+    assert response.status_code == 400
+    assert "disabled" in response.json()["detail"].lower()
+
+
+def test_health_skips_ollama_check_when_disabled(client, monkeypatch):
+    c, _store = client
+    monkeypatch.setattr(main, "ALLOW_OLLAMA", False)
+
+    def boom():
+        raise AssertionError("should not attempt to reach Ollama when disabled")
+
+    monkeypatch.setattr("ollama.list", boom, raising=False)
+
+    response = c.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["ollama_reachable"] is False
