@@ -1,365 +1,210 @@
-# Insurance AI Knowledge Assistant
+# Grounded Document Q&A — Retrieval-Augmented Generation
 
 [![Tests](https://github.com/VJ1133/insurance-rag-assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/VJ1133/insurance-rag-assistant/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 
-A local, portfolio-quality Retrieval-Augmented Generation (RAG) application.
-Upload insurance-related PDFs, ask questions in plain English, and get answers
-grounded in your own documents — with citations back to the source page.
+Upload any PDF (contracts, policies, research papers, manuals, financial or regulatory reports) and ask questions in plain English. Answers are grounded in your documents, cited down to the page, and the assistant refuses when the documents don't support an answer.
 
-This project is being built version by version (V1 → V5) so that each stage
-demonstrates a distinct AI engineering concept, from a minimal single-document
-RAG pipeline up to an evaluated, production-style service.
+The pipeline is domain-agnostic: nothing in parsing, chunking, retrieval, or generation is tied to a particular subject. It was developed and evaluated on insurance and regulatory reports because their dense, multi-column tables are a hard stress test for RAG.
 
-> **Status: V5 complete.** Hybrid retrieval, cross-encoder reranking, an
-> evaluation harness (`eval/cases.json`, `scripts/run_eval.py`), structured
-> per-question logging, a FastAPI service, and a Docker deployment are all
-> in place.
+The project focuses on the parts of RAG that are hard to get right in practice: extracting text from table-heavy PDFs, retrieval that holds up on repetitive tabular content, verifiable citations, and measuring quality with an evaluation set instead of spot-checking.
 
-## Screenshots
+![Grounded answer with cited-source highlighting](docs/screenshots/grounded-answer-citations.jpg)
 
-| | |
-|---|---|
-| ![Hero panel and question box](docs/screenshots/hero-and-question.jpg) | ![Grounded answer with cited-source highlighting](docs/screenshots/grounded-answer-citations.jpg) |
-| Sidebar shows live system status, indexed documents, and the answer engine toggle. | A real question against the NAIC auto insurance report — grounded, with the passage the answer actually cites highlighted separately from passages retrieved-but-unused. |
-
-![Retrieved evidence panel showing the exact cited passage text](docs/screenshots/retrieved-evidence.jpg)
-The evidence panel shows the actual retrieved passage text, with the cited one marked "★ USED IN ANSWER" — nothing here is trimmed or reformatted for the screenshot.
+---
 
 ## Results
 
-- **Reranking raised retrieval MRR from 0.25 to 0.90** on the evaluation set (`eval/cases.json`, scored by `scripts/run_eval.py`) — the correct page moved from an average rank of ~4 up to ~1.1.
-- **7/7 answer accuracy** on the evaluation set with Groq as the generation provider (expected values present, forbidden values absent, out-of-scope questions correctly refused).
-- **A real bug, caught and fixed with a regression test:** the pipeline initially answered "Earned Premium" questions with the adjacent "Earned Exposure" column from a flattened multi-column table. Fixed with an explicit prompt rule about column-group order plus a code-level check (`src/evaluation.py::unsupported_numbers`) that flags any answer number absent from the retrieved passages — see `CHANGELOG.md` for the full writeup.
+Measured on insurance and regulatory reports, using the evaluation set in [`eval/cases.json`](eval/cases.json) with [`scripts/run_eval.py`](scripts/run_eval.py):
 
-## Why this project exists
+| Metric | Before | After |
+|---|---|---|
+| Retrieval MRR | 0.25 (hybrid only) | **0.90** (hybrid + cross-encoder reranking) |
+| Average rank of the correct page | ~4 | **~1.1** |
+| Answer accuracy (Groq generation) | — | **7 / 7** |
 
-Most portfolio chatbots are thin wrappers around a hosted LLM API. This
-project instead demonstrates the parts that actually make RAG hard to get
-right: chunking strategy, embeddings and semantic retrieval, grounding the
-model in retrieved evidence, citation accuracy, and — in later versions —
-measuring retrieval and answer quality rather than asserting it.
+Answer accuracy checks that required values appear, known-wrong values do not, and out-of-scope questions are refused.
 
-## Architecture (V2)
+**A bug found through evaluation.** On a report with a flattened multi-column table, the pipeline answered "Earned Premium" questions using the adjacent "Earned Exposure" column. The fix had two parts: a prompt rule describing column-group order, and a code-level guard (`src/evaluation.py::unsupported_numbers`) that flags any number in an answer that doesn't appear in the retrieved passages. A regression test now covers the case. Full write-up in [`CHANGELOG.md`](CHANGELOG.md).
+
+---
+
+## Features
+
+- **Works with any PDF**: text, multi-column layouts, and tables are parsed the same way regardless of subject.
+- **Multi-document ingestion** with user-defined document types and filtering by type or by document.
+- **Layout-aware PDF extraction** (PyMuPDF) that preserves column and table reading order.
+- **Hybrid retrieval**: semantic search (MiniLM embeddings in ChromaDB) and BM25 keyword search, combined with Reciprocal Rank Fusion, then reranked by a cross-encoder.
+- **Grounded answers**: each answer carries a real `grounded` flag, and the model refuses when the retrieved context is insufficient.
+- **Passage-level citations**: the model reports which passages it used through a structured trailer; the UI highlights those passages and dims retrieved-but-unused ones.
+- **Two generation backends**, switchable per question: local Ollama (`gemma3:4b`, fully private) or Groq (`openai/gpt-oss-120b`, stronger on dense tables).
+- **FastAPI service** sharing the same vector store as the Streamlit UI.
+- **Structured per-question logging** for debugging retrieval and generation.
+- **Docker Compose deployment** with models downloaded at build time.
+- **CI**: unit tests run on every push via GitHub Actions.
+
+---
+
+## Architecture
 
 ```
-User
-  │
-  ▼
-Streamlit UI
-  │
-  ▼
-PDF upload (one or many) ──▶ PyMuPDF (text extraction, column/table-aware)
-  │                            + document type tag (user-provided)
-  ▼
-Chunking (fixed-size, per-page, overlapping)
-  │  + page number, printed page number, section (all best-effort)
-  ▼
-Sentence Transformers (all-MiniLM-L6-v2 embeddings)
-  │
-  ▼
-ChromaDB (local persistent vector store, shared across all documents)
-  │
-  ▼
-Hybrid retrieval — semantic (cosine) + keyword (BM25) rankings fused via
-  Reciprocal Rank Fusion, across the whole collection or a filtered subset
-  │
-  ▼
-Generation — Ollama (local, gemma3:4b) OR Groq API (cloud, openai/gpt-oss-120b)
-  answers ONLY from retrieved context, switchable live in the UI
-  │
-  ▼
-Answer, with per-passage citations (document, page, section)
+PDF upload ──▶ PyMuPDF extraction (column/table-aware)
+                 │
+                 ▼
+           Chunking (overlapping, per page)
+           + metadata: document, type, page, section
+                 │
+                 ▼
+     Sentence Transformers (all-MiniLM-L6-v2)
+                 │
+                 ▼
+         ChromaDB (persistent, local)
+
+Question ──▶ Semantic search ─┐
+         └─▶ BM25 search ─────┴─▶ Reciprocal Rank Fusion ─▶ Cross-encoder rerank
+                                                                    │
+                                                                    ▼
+                                   LLM (Ollama or Groq), context-only prompt
+                                                                    │
+                                                                    ▼
+                                 Answer + grounded flag + cited passages
+                                 + unsupported-number check
 ```
 
-Retrieval (PDF parsing, chunking, embeddings, vector search) always runs
-locally regardless of which generation provider is selected. Only the final
-answer-generation call goes to Groq, and only when that provider is chosen.
+Ingestion, embeddings, retrieval, and reranking always run locally. Only the final generation call leaves the machine, and only when Groq is selected.
 
-## Tech stack
+---
 
-| Technology | Purpose |
-|---|---|
-| Python | Application and RAG logic |
-| Streamlit | Web UI |
-| Ollama | Local LLM inference (free, private, no internet required) |
-| Groq API | Optional hosted LLM inference (free tier, `openai/gpt-oss-120b`) — meaningfully more accurate at precise lookups in dense/tabular context than a small local model, at the cost of sending retrieved passage text to a third party for that call |
-| Sentence Transformers | Local embedding model (always runs locally, regardless of generation provider) |
-| ChromaDB | Local vector database |
-| rank_bm25 | Keyword scoring for hybrid retrieval (fused with semantic search via RRF) |
-| PyMuPDF | PDF text extraction, with column/table-aware reading order |
-| FastAPI | Added in V5 for API serving |
-| Docker | Added in V5 for packaging |
+## Key engineering decisions
 
-## Docker
+**Why hybrid retrieval.** On an insurance report containing a large state-by-state table, the question "What is the minimum PIP for Utah?" failed with semantic search alone: the right chunk contained many states, so its embedding wasn't specifically "about Utah." It didn't appear in the top 15 of 828 chunks. Adding BM25 moved it to rank 3. RRF fuses rank orderings instead of raw scores, since cosine distance and BM25 scores aren't on comparable scales.
 
-Runs both front ends (Streamlit + the FastAPI service) against a shared,
-persistent vector store, and is **Groq-only**: `ALLOW_OLLAMA=false` is
-baked into the image itself (there is no local Ollama to reach from a
-public deployment, and this repo is meant to be safely shareable, so the
-option is compiled out rather than merely hidden in the UI).
+**Why add a reranker.** Hybrid retrieval got the right passage into the candidate set, but often not near the top. A cross-encoder scores each question–passage pair jointly, which raised MRR from 0.25 to 0.90.
+
+**Why a numeric faithfulness check.** A refusal check can't catch a confident answer built from the wrong table cell. Verifying that every number in the answer exists in the retrieved text catches that class of error cheaply and deterministically.
+
+**Why keep citations out of the answer text.** The model reports used passages in a machine-readable trailer (`USED_PASSAGES: 1,3`) that the app parses and removes. The UI renders citations from that, so the prose and the citation list can't disagree.
+
+---
+
+## Quick start
+
+### Docker (recommended)
 
 ```bash
-cp .env.example .env        # paste your GROQ_API_KEY in
+cp .env.example .env          # add your GROQ_API_KEY
 docker compose up --build
 ```
 
 - Streamlit UI: http://localhost:8501
-- API + interactive docs: http://localhost:8000/docs
+- API docs: http://localhost:8000/docs
 
-Your `.env` file is only ever read by Compose to set the container's
-environment; it is excluded by `.dockerignore` and is never baked into the
-image, so it is safe even for an image you might later push somewhere
-public. The embedding and reranker models are downloaded once at *build*
-time (baked into the image), not at container start, so a running
-container needs no outbound network access beyond the Groq API call
-itself.
+The Docker image is Groq-only (`ALLOW_OLLAMA=false`), since a deployed container has no local Ollama to reach. `.env` is excluded by `.dockerignore` and never baked into the image.
+
+### Local
+
+```bash
+python -m venv venv
+source venv/bin/activate      # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Configure at least one generation provider:
+
+- **Ollama (local, private):** `ollama pull gemma3:4b`, then make sure it's reachable on `localhost:11434`.
+- **Groq (hosted):** create a free key at [console.groq.com](https://console.groq.com) and add `GROQ_API_KEY=...` to `.env`.
+
+The app uses Groq if a key is present and falls back to Ollama otherwise. You can switch in the sidebar.
+
+```bash
+python scripts/make_sample_pdf.py   # optional synthetic test document
+streamlit run app/app.py
+```
+
+---
 
 ## API
-
-A FastAPI service wraps the same pipeline the Streamlit app uses (same
-on-disk vector store, so documents ingested via either one are visible to
-both):
 
 ```bash
 uvicorn api.main:app --reload --port 8000
 ```
 
-Interactive docs at `http://localhost:8000/docs`. Endpoints: `GET /health`,
-`GET /documents`, `POST /documents` (multipart PDF upload), `DELETE
-/documents/{name}`, `POST /ask`.
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Service and provider status |
+| `GET` | `/documents` | List indexed documents |
+| `POST` | `/documents` | Upload and index a PDF (multipart) |
+| `DELETE` | `/documents/{name}` | Remove a document from the index |
+| `POST` | `/ask` | Ask a question; returns answer, grounded flag, and citations |
 
-## Roadmap
+---
 
-| Version | Focus |
+## Evaluation and testing
+
+```bash
+pytest                              # unit tests (also run in CI)
+python scripts/run_eval.py          # retrieval MRR and answer accuracy on eval/cases.json
+python scripts/test_grounding.py    # grounded vs. refused behavior against a live LLM
+```
+
+Debugging utilities:
+
+- `scripts/debug_retrieval.py` shows ranked retrieval results for a question.
+- `scripts/debug_page_extraction.py` flags pages likely to have lost content to images.
+
+---
+
+## Screenshots
+
+| | |
 |---|---|
-| V1 | Basic single-PDF RAG |
-| V2 | Multi-document RAG with metadata filtering |
-| V3 | Citations and grounded-answer formatting |
-| **V4** | Conversational RAG with follow-up questions |
-| V5 | Evaluation, hybrid retrieval/reranking, FastAPI, tests, logging, Docker |
+| ![Main view](docs/screenshots/hero-and-question.jpg) | ![Evidence panel](docs/screenshots/retrieved-evidence.jpg) |
+| Sidebar with system status, indexed documents, and provider toggle. | Evidence panel with the cited passage marked and unused passages dimmed. |
 
-## Setup
-
-1. **Create and activate a virtual environment**
-   ```bash
-   python -m venv venv
-   # Windows
-   venv\Scripts\activate
-   # macOS/Linux
-   source venv/bin/activate
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Set up at least one generation provider** (you can configure both and
-   switch live in the app's sidebar):
-
-   **Option A — Local Ollama** (free, fully private, no internet required):
-   ```bash
-   ollama pull gemma3:4b
-   ollama serve
-   ```
-   (If `ollama serve` is already running as a background service, skip that
-   step — the app just needs it reachable on `localhost:11434`.)
-
-   **Option B — Groq API** (free tier, much larger model, better at precise
-   lookups in dense/tabular documents — but sends retrieved passage text to
-   Groq's servers for each generation call):
-   1. Sign up for a free account at [console.groq.com](https://console.groq.com)
-      and create an API key.
-   2. Copy `.env.example` to `.env`:
-      ```bash
-      cp .env.example .env
-      ```
-   3. Open `.env` and paste your key:
-      ```
-      GROQ_API_KEY=your_key_here
-      ```
-      `.env` is git-ignored — your key is never committed.
-
-   The app auto-detects what's available: it defaults to Groq if a key is
-   configured, otherwise falls back to local Ollama. A sidebar toggle lets
-   you switch between them at any time, per question.
-
-4. **(Optional) Generate a synthetic sample PDF** for a quick test drive:
-   ```bash
-   python scripts/make_sample_pdf.py
-   ```
-
-5. **Run the app**
-   ```bash
-   streamlit run app/app.py
-   ```
-
-## Multi-document features (V2)
-
-- **Upload several PDFs at once.** The uploader accepts multiple files; each
-  gets chunked, embedded, and indexed independently, and a question searches
-  across all of them together.
-- **Document type tagging.** Give a batch of uploads a type (e.g. `Policy`,
-  `Catalog`, `Regulatory Report`) before ingesting — this is a plain text
-  field you control, not auto-detected.
-- **Filtering.** The "Filter which documents to search" expander above the
-  question box lets you scope a question to specific document types and/or
-  specific documents, instead of always searching everything.
-- **Per-document management.** Each indexed document shows its type and
-  chunk count in the sidebar, with an `X` button to remove just that one
-  document — no need to clear and re-upload everything.
-- **Section hints.** Each chunk carries a best-effort guess at which
-  heading/section it came from (the first short, non-tabular line on its
-  page), shown in the evidence panel when detected.
-
-## Citations & grounding (V3)
-
-- **Grounded/ungrounded badge.** Every answer is explicitly labeled
-  ✓ Grounded or ⚠ Not supported by documents — this isn't just prose the
-  model happened to write; `RagAnswer.grounded` is a real boolean set by
-  `answer_question()`, based on whether the model's refusal message was
-  returned (or whether there was anything to search in the first place).
-- **Evidence always shown, even when unsupported.** Retrieved passages are
-  displayed whether or not they were enough to answer — so you can see
-  *why* the assistant said it didn't know (the closest matches just weren't
-  good enough), not just that it refused.
-- **Retrieval scores are opt-in.** Passage-to-question distances are only
-  shown when you tick "Show retrieval scores (debug)" — useful when
-  debugging retrieval quality, hidden by default to keep the evidence panel
-  readable for normal use.
-- **Clean answer text, separate citations.** The prompt tells the model not
-  to inline its own passage numbers/citation markers — sources are always
-  rendered by the UI (chips + evidence panel), so the answer prose and the
-  citation list don't duplicate or disagree with each other.
-- **Exact passage highlighting.** With retrieval sometimes returning 8
-  passages, knowing *which one* actually backs the answer matters. The
-  model reports which passage number(s) it used via a structured trailer
-  parsed out of its response (`USED_PASSAGES: 1,3` — never shown to you as
-  raw text). Those specific passages get a highlighted gold `★` chip and
-  are marked "★ USED IN ANSWER" in the evidence panel, sorted first;
-  everything else retrieved-but-unused is shown dimmed underneath instead
-  of all passages looking equally relevant.
-- **Repeatable grounding test set.** `scripts/test_grounding.py` runs a
-  curated list of questions (some answerable, some deliberately
-  out-of-scope) against whichever documents are indexed and reports
-  pass/fail against the expected grounded/ungrounded label for each —
-  a manual-run, live-LLM check that a code or prompt change didn't quietly
-  break refusal behavior.
-
-## Hybrid retrieval (pulled forward from V5)
-
-Pure semantic search has a real weakness this project hit in practice:
-on a document that's mostly a large table repeated across many pages (a
-state-by-state coverage comparison, for example), the chunk containing the
-answer to "what is the minimum PIP for Utah?" doesn't necessarily *embed*
-as being about Utah — its meaning gets diluted by a dozen other states'
-near-identical notes packed into the same chunk. The literal word "Utah"
-was sitting right there in the text, but semantic similarity alone ranked
-it below completely unrelated states.
-
-`VectorStore.query()` now combines two independent rankings over the same
-candidate pool, fused with **Reciprocal Rank Fusion (RRF)**:
-
-- **Semantic:** cosine distance between the question and each chunk's
-  embedding (unchanged from before).
-- **Keyword:** a BM25 score between the question's tokens and each chunk's
-  text — this is what actually catches an exact term like a state name or
-  product code that semantic search can bury.
-
-RRF combines the two rank *orderings* rather than trying to compare a
-cosine distance and a BM25 score on the same numeric scale (they aren't
-comparable), which makes the result robust even when one signal is noisy
-for a given question. This fixed a real, reproducible failure case:
-verified against the actual NAIC auto insurance report, "Utah minimum
-PIP" went from not appearing in the top 15 out of 828 chunks (pure
-semantic) to rank 3 (hybrid) — a correct, grounded answer citing the
-right passage.
-
-## Example questions to try
-
-- "What exposure characteristics does the model use?"
-- "What are the known limitations of this model?"
-- "What should exposure data quality checks include?"
-- "What is the capital of France?" — a good test that the assistant correctly
-  refuses to answer from outside knowledge.
-
-## Known limitations (V3)
-
-- Fixed-size chunking (words, not semantic boundaries) — a simple starting
-  point, not the final word on chunk quality.
-- No conversation memory — every question is independent (V4).
-- No automated retrieval/answer-quality evaluation yet — `scripts/test_grounding.py`
-  checks grounded-vs-refused behavior, but doesn't score retrieval precision/recall
-  or answer quality numerically (that's V5).
-- The `grounded` flag is a string match against the model's own refusal
-  message — if a model ever phrases a refusal differently (or a prompt
-  change alters the exact wording), grounding detection silently breaks
-  until `INSUFFICIENT_CONTEXT_MESSAGE` and the prompt are kept in sync.
-  It also can't catch the harder case where the model gives a specific,
-  wrong-sounding answer that isn't actually a real quote from any
-  retrieved passage (a genuine hallucination that isn't a refusal) — there
-  is no faithfulness check verifying the answer's claims against the
-  source text.
-- Hybrid retrieval (`VectorStore.query()`) rebuilds a BM25 index over the
-  full filtered candidate pool on every query, in-memory, from scratch.
-  Fine at this project's scale (hundreds to low thousands of chunks); a
-  much larger corpus would need a persistent keyword index instead of
-  rebuilding one per question.
-- Cited-passage highlighting depends on the model correctly following the
-  `USED_PASSAGES: 1,3` trailer instruction. If a model omits or malforms
-  it, `_extract_used_passages()` degrades gracefully (no passage gets
-  highlighted, every source shows with equal weight) rather than crashing
-  or showing wrong information — but you lose the "which passage exactly"
-  signal for that answer.
-- Local generation (`gemma3:4b`) is noticeably weaker than the Groq option at
-  precise lookups in dense, table-heavy documents (e.g. exact values in a
-  price list) — it can answer "insufficient information" even when the right
-  passage was retrieved, simply from being a small model. Switch to Groq in
-  the sidebar for those cases.
-- Table/column-aware extraction (`src/document_loader.py`) is a heuristic,
-  not a guarantee — unusual page layouts can still misattribute content.
-- Document type is a free-text field you set at upload time, not inferred
-  from content — typos create a new, separate filter option rather than
-  merging into an existing one.
-- Section detection is page-level and best-effort: a page with several
-  sections on it (common in dense catalogs) only gets tagged with the first
-  one, and headings PyMuPDF merges into a longer descriptive block won't be
-  picked up at all.
-
-## Privacy
-
-PDF parsing, chunking, embeddings, and vector storage always run locally —
-that part never changes. Generation depends on which provider you select:
-
-- **Local (Ollama):** fully local, nothing leaves your machine.
-- **Groq API:** the retrieved passage text (not the whole document, but
-  whatever chunks were relevant to your question) is sent to Groq's servers
-  for that generation call.
-
-Do not upload confidential or copyrighted documents you don't have
-permission to store or process — and if using Groq mode, don't use it for
-documents you can't send to a third-party API.
+---
 
 ## Project structure
 
 ```
-insurance-rag-assistant/
+grounded-document-qa/
 ├── app/
-│   ├── app.py                    # Streamlit UI
-│   └── assets/styles.css         # Custom UI theme
+│   ├── app.py                  # Streamlit UI
+│   └── assets/styles.css
+├── api/
+│   └── main.py                 # FastAPI service
 ├── src/
-│   ├── document_loader.py        # PDF → page text (column/table-aware PyMuPDF)
-│   ├── chunker.py                # Page text → overlapping chunks
-│   ├── embeddings.py             # Sentence Transformers wrapper
-│   ├── vector_store.py           # ChromaDB collection wrapper
-│   └── rag_pipeline.py           # Retrieval + Ollama/Groq generation
-├── scripts/
-│   ├── make_sample_pdf.py        # Generates a synthetic demo PDF
-│   ├── debug_retrieval.py        # Inspect ranked retrieval results for a question
-│   └── debug_page_extraction.py  # Flag pages that likely lost content to images
-├── data/sample_documents/        # Local test PDFs (gitignored except README)
-├── tests/                        # pytest unit tests
-├── .env.example                  # Copy to .env and add your GROQ_API_KEY
-├── requirements.txt
-└── README.md
+│   ├── document_loader.py      # Layout-aware PDF extraction
+│   ├── chunker.py              # Overlapping, page-level chunking
+│   ├── embeddings.py           # Sentence Transformers wrapper
+│   ├── vector_store.py         # ChromaDB + BM25 hybrid retrieval
+│   ├── rag_pipeline.py         # Retrieval, reranking, generation
+│   └── evaluation.py           # Metrics and faithfulness checks
+├── eval/cases.json             # Evaluation set
+├── scripts/                    # Eval, grounding tests, debugging tools
+├── tests/                      # pytest suite
+├── docs/screenshots/
+├── Dockerfile
+├── docker-compose.yml
+├── CHANGELOG.md
+└── requirements.txt
 ```
+
+---
+
+## Limitations and next steps
+
+- **Small evaluation set.** Seven cases show the approach works but aren't statistically strong. The current set covers insurance and regulatory reports; expanding to 50+ cases across other domains (legal, technical, academic) is the next priority.
+- **Fixed-size chunking.** Chunks are split by word count, not by semantic or table boundaries. Table-aware chunking would likely help most on dense reports.
+- **BM25 index rebuilt per query.** Fine at a few thousand chunks, but a larger corpus needs a persistent keyword index.
+- **Refusal detection is string-based.** The `grounded` flag depends on the model using an exact refusal message.
+- **Citations depend on model compliance.** If the model omits the `USED_PASSAGES` trailer, the UI falls back to showing all passages equally rather than failing.
+- **Local model accuracy.** `gemma3:4b` is noticeably weaker than the Groq model on precise table lookups.
+- **PDF only.** Scanned or image-only PDFs need OCR, which isn't included yet. Word, HTML, and other formats aren't supported.
+- **Heuristic section detection.** Only the first heading on each page is captured.
+
+---
+
+## Privacy
+
+Parsing, embeddings, retrieval, and reranking always run locally. With Ollama, nothing leaves the machine. With Groq, only the retrieved passages for a given question are sent to Groq's API. Don't upload documents you don't have permission to process, or send confidential material through the Groq option.
