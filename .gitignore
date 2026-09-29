@@ -22,3 +22,4 @@ eval/results/
 
 # Real NAIC report used for local testing/eval -- not sample data, not for the repo
 /auto_insurance_report.pdf
+/Insurance_AI_RAG_Project_V1_to_V5.docx
