@@ -1,5 +1,7 @@
 # Insurance AI Knowledge Assistant
 
+[![Tests](https://github.com/VJ1133/insurance-rag-assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/VJ1133/insurance-rag-assistant/actions/workflows/tests.yml)
+
 A local, portfolio-quality Retrieval-Augmented Generation (RAG) application.
 Upload insurance-related PDFs, ask questions in plain English, and get answers
 grounded in your own documents — with citations back to the source page.

@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # matches Dockerfile's base image
+          cache: pip
+
+      # Sentence Transformers and the reranker download their models from
+      # the HF Hub on first use; cache them so most runs don't re-download
+      # (~180MB) and don't depend on the Hub being up.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ hashFiles('src/embeddings.py', 'src/reranker.py') }}
+
+      - name: Install CPU-only torch
+        # A plain `pip install` resolves torch's default CUDA build (several
+        # GB of unused nvidia-*/triton packages) -- see Dockerfile for the
+        # same fix. Not strictly required on a CI runner's disk budget, but
+        # keeps installs fast and matches how the image itself is built.
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -q
